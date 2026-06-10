@@ -155,11 +155,11 @@ function resolveEngagement({ attacker, defender, weaponType, amount, distance, d
     admissibility: PERMISSIVE_ADMISSIBILITY,
   });
 
-  const preStrength = Math.max(0, defender.strength);
-  const expectedLoss = Math.min(rawKernel, preStrength);
-  const remainingStrength = preStrength - expectedLoss;
-  defender.strength = remainingStrength;
-  const destroyed = remainingStrength <= DESTROYED_THRESHOLD;
+  const preHp = Math.max(0, defender.hp);
+  const expectedLoss = Math.min(rawKernel, preHp);
+  const remainingHp = preHp - expectedLoss;
+  defender.hp = remainingHp;
+  const destroyed = remainingHp <= DESTROYED_THRESHOLD;
 
   return {
     ok: true,
@@ -177,7 +177,7 @@ function resolveEngagement({ attacker, defender, weaponType, amount, distance, d
     rawKernel,
     interception: { pDefenseTotal, details: interceptionDetails },
     expectedLoss,
-    remainingStrength,
+    remainingHp,
     destroyed,
   };
 }
