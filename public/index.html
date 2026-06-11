@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Operação Atlântico Sul · Simulação Construtiva</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+
+<!-- ═══ HERO ═══════════════════════════════════════════════════════════════ -->
+<section class="hero">
+  <div class="hero-overlay"></div>
+  <div class="hero-content">
+    <div class="classification">SIMULAÇÃO CONSTRUTIVA NAVAL</div>
+    <h1>OPERAÇÃO<br><span>ATLÂNTICO SUL</span></h1>
+    <p class="tagline">Equação de Salva Multidomínio · Planejamento Baseado em Capacidades</p>
+    <a href="#lobby" class="btn-primary scroll-down">▼ INICIAR OPERAÇÃO</a>
+  </div>
+  <div class="compass-rose">
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="50,5 55,45 50,55 45,45" fill="#c9a84c"/>
+      <polygon points="50,95 55,55 50,45 45,55" fill="#7a7a7a"/>
+      <polygon points="5,50 45,45 55,50 45,55" fill="#7a7a7a"/>
+      <polygon points="95,50 55,45 45,50 55,55" fill="#7a7a7a"/>
+      <circle cx="50" cy="50" r="6" fill="#c9a84c" stroke="#fff" stroke-width="1"/>
+      <text x="50" y="2"  text-anchor="middle" font-size="8" fill="#c9a84c" font-weight="bold">N</text>
+      <text x="50" y="99" text-anchor="middle" font-size="8" fill="#aaa">S</text>
+      <text x="99" y="53" text-anchor="end"    font-size="8" fill="#aaa">L</text>
+      <text x="2"  y="53" text-anchor="start"  font-size="8" fill="#aaa">O</text>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══ CONCEPT ════════════════════════════════════════════════════════════ -->
+<section class="concept">
+  <div class="container">
+    <h2>TEATRO DE OPERAÇÕES</h2>
+    <p>Um wargame tático naval ambientado no Atlântico Sul, cobrindo as águas do litoral brasileiro
+       até o oceano aberto. Dois comandantes — <strong>Força Azul</strong> e <strong>Força Vermelha</strong> —
+       disputam o controle do teatro marítimo em turnos que representam 12 horas de combate real.</p>
+
+    <div class="feature-grid">
+      <div class="feature">
+        <div class="feat-icon">⬡</div>
+        <h3>Grade Hexagonal</h3>
+        <p>Mapa em hexágonos estilo wargame clássico. Cada hexágono representa um setor náutico.</p>
+      </div>
+      <div class="feature">
+        <div class="feat-icon">🌙</div>
+        <h3>Ciclo Dia / Noite</h3>
+        <p>Turnos alternados entre períodos diurnos e noturnos. A noite reduz os alcances de detecção.</p>
+      </div>
+      <div class="feature">
+        <div class="feat-icon">👁</div>
+        <h3>Névoa de Guerra</h3>
+        <p>Unidades inimigas só são visíveis dentro do alcance de detecção das suas forças.</p>
+      </div>
+      <div class="feature">
+        <div class="feat-icon">⚡</div>
+        <h3>Combate Simultâneo</h3>
+        <p>Ambos os lados declaram ataques ao mesmo tempo. A resolução é simultânea e realista.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ UNITS ═══════════════════════════════════════════════════════════════ -->
+<section class="oob-section">
+  <div class="container">
+    <h2>ORDEM DE BATALHA</h2>
+    <p class="oob-intro">Cada equipe controla um conjunto de grupos de força que representam plataformas reais.
+    Os ícones dos contadores no tabuleiro refletem o tipo principal de cada grupo.</p>
+
+    <div class="oob-forces">
+
+      <!-- BLUE FORCE -->
+      <div class="oob-side">
+        <div class="oob-side-title blue-title">&#127463;&#127479; FORÇA AZUL · MARINHA DO BRASIL</div>
+        <table class="oob-table">
+          <thead><tr><th>Tipo</th><th>Qtd</th><th>Plataformas</th><th>Cat.</th></tr></thead>
+          <tbody>
+            <tr><td><span class="oc blue-oc">CV</span></td><td class="opl">1</td><td>Navio Aeródromo NAM Atlântico + 8 Helos</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc blue-oc">FF</span></td><td class="opl">5</td><td>Fragatas Tamandaré (3 + 2)</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc blue-oc">CO</span></td><td class="opl">2</td><td>Corvetas Barroso</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc blue-oc">AN</span></td><td class="opl">3</td><td>Navios Anfíbios · NDM Bahia + Oiapoque + NCC Sabóia</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc blue-oc">LG</span></td><td class="opl">1</td><td>Navio Apoio Logístico (NApLog)</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc blue-oc">NT</span></td><td class="opl">1</td><td>Navio Tanque Alte. Gastão Motta</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc blue-oc">PO</span></td><td class="opl">4</td><td>NPaOc Apa / Amazonas — Patrulha Oceânica</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc blue-oc">PC</span></td><td class="opl">4</td><td>NPa Macaé / Grajaú — Patrulha Costeira</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc blue-oc">SN</span></td><td class="opl">1</td><td>SNAC Álvaro Alberto — Submarino Nuclear</td><td class="ocat">Submarino</td></tr>
+            <tr><td><span class="oc blue-oc">SS</span></td><td class="opl">3</td><td>S40 Riachuelo / S41 Humaitá / S42 Tonelero</td><td class="ocat">Submarino</td></tr>
+            <tr><td><span class="oc blue-oc">MP</span></td><td class="opl">4</td><td>P-3AM Orion — Patrulha Marítima ASW</td><td class="ocat">Aéreo</td></tr>
+            <tr><td><span class="oc blue-oc">F</span></td><td class="opl">12</td><td>F-39E Gripen — Caça 5ª Geração (2 esq.)</td><td class="ocat">Aéreo</td></tr>
+            <tr><td><span class="oc blue-oc">A</span></td><td class="opl">4</td><td>AF-1 A-4 Skyhawk — Ataque Embarcado (2 esq.)</td><td class="ocat">Aéreo</td></tr>
+            <tr><td><span class="oc blue-oc">BC</span></td><td class="opl">4</td><td>Baterias Costeiras MANSUP-ER (2 grupos)</td><td class="ocat">Terrestre</td></tr>
+            <tr><td><span class="oc blue-oc">AD</span></td><td class="opl">4</td><td>Baterias ADA SHORAD / GBAD Médio (2 grupos)</td><td class="ocat">Terrestre</td></tr>
+            <tr><td><span class="oc blue-oc">FP</span></td><td class="opl">4</td><td>Plataformas FPSO — Pré-Sal (PLT-01 a 05)</td><td class="ocat">Infraest.</td></tr>
+            <tr><td><span class="oc blue-oc">PT</span></td><td class="opl">4</td><td>Portos Santos · Rio · Vitória · Açu</td><td class="ocat">Infraest.</td></tr>
+          </tbody>
+        </table>
+        <div class="oob-note">30 unidades no tabuleiro · 17 tipos de plataforma</div>
+      </div>
+
+      <!-- RED FORCE -->
+      <div class="oob-side">
+        <div class="oob-side-title red-title">&#9876; FORÇA VERMELHA · ADVERSÁRIO</div>
+        <table class="oob-table">
+          <thead><tr><th>Tipo</th><th>Qtd</th><th>Plataformas</th><th>Cat.</th></tr></thead>
+          <tbody>
+            <tr><td><span class="oc red-oc">CV</span></td><td class="opl">1</td><td>KCV Aurelius Magnus + 12 Helos</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc red-oc">CG</span></td><td class="opl">1</td><td>CG Drakhmar — Cruzador de Mísseis</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc red-oc">DD</span></td><td class="opl">3</td><td>DDG Volnaria — Destroiers (2 + 1)</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc red-oc">FF</span></td><td class="opl">5</td><td>Fragatas Classe Volnaria (2 + 3)</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc red-oc">AN</span></td><td class="opl">4</td><td>LPD Harnax + 2 LST Morvask</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc red-oc">NT</span></td><td class="opl">1</td><td>AOR Classe Korvas — Reabastecedor</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc red-oc">LG</span></td><td class="opl">4</td><td>AOR Korvas + AOT Brennar + 2 AKE Yarven</td><td class="ocat">Superfície</td></tr>
+            <tr><td><span class="oc red-oc">SN</span></td><td class="opl">1</td><td>KAR Veylan — Submarino Nuclear (SSN)</td><td class="ocat">Submarino</td></tr>
+            <tr><td><span class="oc red-oc">SS</span></td><td class="opl">1</td><td>KAR Skarn — Submarino Convencional</td><td class="ocat">Submarino</td></tr>
+            <tr><td><span class="oc red-oc">F</span></td><td class="opl">16</td><td>KMF-22 Sturmadler — Caça 4.5ª Gen embarcado (2 esq.)</td><td class="ocat">Aéreo</td></tr>
+            <tr><td><span class="oc red-oc">MP</span></td><td class="opl">4</td><td>K-32 Stormwatch — Patrulha Marítima ASW (2 esq.)</td><td class="ocat">Aéreo</td></tr>
+            <tr><td><span class="oc red-oc">AW</span></td><td class="opl">2</td><td>K-99 Argus — AEW Embarcado (raio ISR 9 hex)</td><td class="ocat">Aéreo</td></tr>
+          </tbody>
+        </table>
+        <div class="oob-note">15 unidades no tabuleiro · 12 tipos de plataforma</div>
+      </div>
+
+    </div><!-- oob-forces -->
+
+    <div class="oob-legend">
+      <div class="leg-group-title">LEGENDA DE ÍCONES</div>
+      <div class="leg-items">
+        <span class="leg-item"><span class="oc blue-oc">CV</span> Navio Aeródromo</span>
+        <span class="leg-item"><span class="oc blue-oc">CG</span> Cruzador</span>
+        <span class="leg-item"><span class="oc blue-oc">DD</span> Destroier</span>
+        <span class="leg-item"><span class="oc blue-oc">FF</span> Fragata</span>
+        <span class="leg-item"><span class="oc blue-oc">CO</span> Corveta</span>
+        <span class="leg-item"><span class="oc blue-oc">AN</span> Anfíbio</span>
+        <span class="leg-item"><span class="oc blue-oc">LG</span> Logístico</span>
+        <span class="leg-item"><span class="oc blue-oc">NT</span> Tanque</span>
+        <span class="leg-item"><span class="oc blue-oc">PO</span> Pat. Oceânica</span>
+        <span class="leg-item"><span class="oc blue-oc">PC</span> Pat. Costeira</span>
+        <span class="leg-item"><span class="oc blue-oc">SN</span> Sub Nuclear</span>
+        <span class="leg-item"><span class="oc blue-oc">SS</span> Sub Convencional</span>
+        <span class="leg-item"><span class="oc blue-oc">MP</span> Pat. Marítima</span>
+        <span class="leg-item"><span class="oc blue-oc">F</span> Caça</span>
+        <span class="leg-item"><span class="oc blue-oc">A</span> Ataque</span>
+        <span class="leg-item"><span class="oc blue-oc">AW</span> AEW</span>
+        <span class="leg-item"><span class="oc blue-oc">BC</span> Bat. Costeira</span>
+        <span class="leg-item"><span class="oc blue-oc">AD</span> Bat. Antiaérea</span>
+        <span class="leg-item"><span class="oc blue-oc">FP</span> Plataforma FPSO</span>
+        <span class="leg-item"><span class="oc blue-oc">PT</span> Porto</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ HOW TO PLAY ═════════════════════════════════════════════════════════ -->
+<section class="howto">
+  <div class="container">
+    <h2>COMO JOGAR</h2>
+    <div class="steps">
+      <div class="step"><div class="step-n">1</div>
+        <h3>Crie ou entre em uma sala</h3>
+        <p>Um jogador cria a sala e compartilha o código de 6 letras com o adversário.</p>
+      </div>
+      <div class="step"><div class="step-n">2</div>
+        <h3>Fase de Movimentação</h3>
+        <p>Cada time move suas unidades (clique na unidade → hexágonos verdes = alcance).
+           Encerre quando terminar. A outra força move em seguida.</p>
+      </div>
+      <div class="step"><div class="step-n">3</div>
+        <h3>Fase de Combate</h3>
+        <p>Selecione uma unidade sua e clique em inimigos detectados dentro do alcance
+           (hexágonos vermelhos) para declarar ataques. Confirme quando pronto.</p>
+      </div>
+      <div class="step"><div class="step-n">4</div>
+        <h3>Resolução Simultânea</h3>
+        <p>Quando ambos confirmam, os ataques são resolvidos ao mesmo tempo.
+           Unidades destruídas são removidas do tabuleiro.</p>
+      </div>
+      <div class="step"><div class="step-n">5</div>
+        <h3>Vitória</h3>
+        <p>Vence quem destruir todas as unidades inimigas. O jogo alterna períodos
+           diurnos e noturnos a cada turno.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ LOBBY ════════════════════════════════════════════════════════════════ -->
+<section class="lobby-section" id="lobby">
+  <div class="container">
+    <h2>INICIAR OPERAÇÃO</h2>
+
+    <div id="lobby-menu" class="lobby-box">
+      <button id="btn-create" class="btn-action blue">
+        <span class="btn-icon">⚓</span>
+        Criar Nova Sala
+        <small>Você joga como Força Azul</small>
+      </button>
+
+      <div class="lobby-or">— ou —</div>
+
+      <div class="join-form">
+        <input id="room-input" type="text" maxlength="6" placeholder="CÓDIGO DA SALA" autocomplete="off">
+        <button id="btn-join" class="btn-action red">
+          <span class="btn-icon">⚔</span>
+          Entrar na Sala
+          <small>Você joga como Força Vermelha</small>
+        </button>
+      </div>
+      <p id="lobby-err" class="lobby-err hidden"></p>
+    </div>
+
+    <div id="lobby-waiting" class="lobby-box waiting hidden">
+      <p>Sala criada com sucesso. Código:</p>
+      <div id="room-display" class="room-code">——</div>
+      <p class="hint">Compartilhe este código com seu oponente</p>
+      <div class="spinner">Aguardando oponente...</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>OPERAÇÃO ATLÂNTICO SUL · Wargame Naval © 2026 · <a href="game.html">Entrar no Teatro de Operações</a></p>
+</footer>
+
+<script>
+  const btnCreate = document.getElementById('btn-create');
+  const btnJoin   = document.getElementById('btn-join');
+  const roomInput = document.getElementById('room-input');
+  const lobbyErr  = document.getElementById('lobby-err');
+
+  btnCreate.addEventListener('click', () => {
+    sessionStorage.setItem('pendingAction', 'create');
+    location.href = '/game';
+  });
+
+  btnJoin.addEventListener('click', () => {
+    const c = roomInput.value.trim().toUpperCase();
+    if (!c) { showErr('Digite o código da sala.'); return; }
+    sessionStorage.setItem('pendingAction', 'join');
+    sessionStorage.setItem('pendingCode', c);
+    location.href = '/game';
+  });
+
+  roomInput.addEventListener('keydown', e => { if (e.key === 'Enter') btnJoin.click(); });
+
+  document.querySelector('.scroll-down').addEventListener('click', e => {
+    e.preventDefault();
+    document.getElementById('lobby').scrollIntoView({ behavior: 'smooth' });
+  });
+
+  function showErr(msg) {
+    lobbyErr.textContent = msg;
+    lobbyErr.classList.remove('hidden');
+    setTimeout(() => lobbyErr.classList.add('hidden'), 4000);
+  }
+</script>
+</body>
+</html>
