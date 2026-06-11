@@ -9,7 +9,8 @@
  * matriz_fatorial_2a5.xlsx "Dicionario"):
  *
  *   E1_atrito      — atrito imposto ao Vermelho (pontos de stayingPower perdidos)
- *   E1_kcv         — 1 se o KCV Aurelius Magnus (RED-GBPA) foi destruído (decisivo)
+ *   E1_kcv         — 1 se as forças Vermelhas como um todo foram reduzidas a
+ *                    incapacidade de combate (decisivo), senão 0
  *   E2_vp          — pontos de valor de infraestrutura crítica preservados (FPSO 1-4)
  *   E2_sloc        — índice [0,1] de segurança das SLOC (sobrevivência dos portos)
  *   E3_culminancia — turno em que a ofensiva Vermelha caiu para <=50% do nível inicial
@@ -17,7 +18,7 @@
  *   atrito_azul    — atrito sofrido pelo Azul (M Dsp — pontos de stayingPower perdidos)
  */
 
-const { KCV_UNIT_ID, FPSO_UNIT_IDS, PORT_UNIT_IDS } = require('./capability_factors');
+const { FPSO_UNIT_IDS, PORT_UNIT_IDS } = require('./capability_factors');
 
 /** Sum of every weapon quantity + offensive capability value for `team`'s living units. */
 function offensiveStock(state, team) {
@@ -40,10 +41,17 @@ function attrition(state, team) {
   return total;
 }
 
-/** 1 if the KCV Aurelius Magnus (RED-GBPA) has been destroyed, else 0. */
-function kcvDestroyed(state) {
-  const kcv = state.units.find(u => u.id === KCV_UNIT_ID);
-  return kcv && kcv.hp <= 0 ? 1 : 0;
+/**
+ * 1 if Red's forces as a whole have been reduced to combat-ineffective
+ * (no surviving Red unit retains any offensive means: attackRange, weapon
+ * stock, or offensive capability), else 0. Mirrors the `!r` branch of
+ * `game_engine.js#checkWinner` -- "decisive" is now defined by overall
+ * reduction of Red's capability, not by the loss of any single unit.
+ */
+function redForceCombatIneffective(state) {
+  const hasOffense = u => Object.values(u.attackRange || {}).some(v => v > 0) || Object.values(u.weapons || {}).some(w => w.quantity > 0) || Object.values(u.capabilities || {}).some(v => v > 0);
+  const r = state.units.some(u => u.team === 'red' && u.hp > 0 && hasOffense(u));
+  return r ? 0 : 1;
 }
 
 /** Sum of remaining hp across the FPSO units (E2_vp — infraestrutura crítica preservada). */
@@ -96,7 +104,7 @@ function createCulminationTracker() {
 function computeFinalMetrics(state, culminationTurn) {
   return {
     E1_atrito: attrition(state, 'red'),
-    E1_kcv: kcvDestroyed(state),
+    E1_kcv: redForceCombatIneffective(state),
     E2_vp: fpsoValuePreserved(state),
     E2_sloc: slocSecurityIndex(state),
     E3_culminancia: culminationTurn,
@@ -107,7 +115,7 @@ function computeFinalMetrics(state, culminationTurn) {
 module.exports = {
   offensiveStock,
   attrition,
-  kcvDestroyed,
+  redForceCombatIneffective,
   fpsoValuePreserved,
   slocSecurityIndex,
   createCulminationTracker,

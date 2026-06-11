@@ -16,7 +16,7 @@ este projeto").
 
 | Arquivo | O que faz |
 |---|---|
-| `shared/capability_factors.js` | Mapeia os 5 fatores de capacidade para unidades da OB, custos EAC e a unidade-KCV; `applyCapabilityConfig(ob, factors)` remove unidades das capacidades "desligadas". |
+| `shared/capability_factors.js` | Mapeia os 5 fatores de capacidade para unidades da OB e custos EAC; `applyCapabilityConfig(ob, factors)` remove unidades das capacidades "desligadas". |
 | `shared/rng.js` | PRNG seedado (`mulberry32`), conforme briefing §13. |
 | `shared/metrics.js` | Calcula `E1_atrito`, `E1_kcv`, `E2_vp`, `E2_sloc`, `E3_culminancia`, `atrito_azul` a partir do estado final do jogo. |
 | `shared/game_engine.js` | **Novo** — motor de jogo headless (sem Socket.io), extraído de `server.js`. Usado tanto pelo servidor multiplayer quanto pelo runner em lote. |
@@ -40,20 +40,28 @@ constante em todas as condições — não está atrelado a nenhum dos 5 fatores
 representando o "núcleo" sempre presente da Força Azul. ISR (sensores,
 detecção) também permanece constante, conforme exigido (briefing §7).
 
-## 2. KCV Aurelius Magnus
+## 2. Condição de vitória decisiva
 
-`RED-GBPA` (CSG — Carrier Strike Group Vermelho) foi adotado como o "KCV
-Aurelius Magnus". `shared/game_engine.js#checkWinner` agora verifica esta
-unidade **antes** da condição genérica de exaustão ofensiva: se
-`RED-GBPA.hp <= 0`, o jogo termina imediatamente com vitória Azul decisiva
-(`E1_kcv = 1`).
+A destruição de uma unidade específica (ex.: `RED-GBPA`, o "KCV Aurelius
+Magnus" / CSG Vermelho) **não** é mais, isoladamente, condição de vitória.
+`shared/game_engine.js#checkWinner` define vitória decisiva pela exaustão
+ofensiva geral de um lado: um lado perde quando nenhuma de suas unidades
+sobreviventes mantém qualquer meio ofensivo (`attackRange`, estoque de
+armas ou capacidade ofensiva > 0). Ou seja, a medida de "decisivo" passou a
+refletir a redução de capacidade / destruição dos meios Vermelhos **em
+geral**, e não a perda de um navio específico.
 
 ## 3. Métricas (E1/E2/E3 + M Dsp)
 
 Implementadas em `shared/metrics.js`, calculadas a partir do estado final:
 
 - **E1_atrito** — soma de `(maxHp - hp)` de todas as unidades Vermelhas.
-- **E1_kcv** — `1` se `RED-GBPA` foi destruído (decisivo), senão `0`.
+- **E1_kcv** — `1` se as forças Vermelhas como um todo foram reduzidas a
+  incapacidade de combate (nenhuma unidade sobrevivente com meio ofensivo
+  > 0 — mesma condição de vitória decisiva descrita na seção 2), senão `0`.
+  ⚠️ proxy: o nome da coluna (`E1_kcv`) é mantido por compatibilidade com
+  `matriz_fatorial_2a5.xlsx`, mas a métrica não está mais ligada a uma
+  unidade específica.
 - **E2_vp** — soma do `hp` restante de `BLUE-FPSO1..4` (infraestrutura
   crítica preservada).
 - **E2_sloc** — índice `[0,1]` = `hp/maxHp` agregado dos portos
@@ -98,7 +106,7 @@ I/O de rede). O CSV de saída segue as colunas de `Coleta_Fatorial` /
 ## 5. Limitação importante: determinismo e réplicas
 
 O motor de combate (`shared/combat_engine.js`) usa a **equação de salva
-determística** (núcleos de valor esperado, calibrados contra as tabelas de
+determinística** (núcleos de valor esperado, calibrados contra as tabelas de
 dano dos Apêndices A-B pela suíte de 60 testes existente) — não consome
 `Math.random()`. O motor de decisão (`shared/bot/decision_engine.js`) também
 é determinístico (sempre escolhe o alvo de maior `attackScore`).

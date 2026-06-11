@@ -30,9 +30,8 @@ const {
   GRID_W, GRID_H, T_DEEP,
   getTerrain, canEnterTerrain, rangeAgainst, hexDist,
 } = require('./hexgrid');
-const { KCV_UNIT_ID } = require('./capability_factors');
 
-// ─── Display type mapping ──────────────────────────────────────────────────
+// ─── Display type mapping ─────────────────────────────────────────────────────
 const COMP_DISPLAY_TYPE = {
   'navio_aeródromo': 'carrier', 'navio_doca': 'amphib', 'navio_desembarque': 'amphib',
   'fragata': 'fragata', 'corveta': 'corveta', 'destroier': 'destroier', 'destroyer': 'destroier',
@@ -47,12 +46,12 @@ const COMP_DISPLAY_TYPE = {
 };
 const DISPLAY_TYPE_FALLBACK = { surface: 'fragata', submarine: 'submarino', air: 'patrulha', land: 'corveta', neutral: 'logistico' };
 
-// ─── Air refuel ────────────────────────────────────────────────────────────────
+// ─── Air refuel ───────────────────────────────────────────────────────────────
 function isAirRefuelLocation(unit, state) {
   return state.units.some(o => o.id !== unit.id && o.team === unit.team && (o.hp ?? 0) > 0 && (o.type === 'aeroporto' || o.type === 'carrier') && o.col === unit.col && o.row === unit.row);
 }
 
-// ─── Fog of war ─────────────────────────────────────────────────────────────────
+// ─── Fog of war ───────────────────────────────────────────────────────────────
 function saveMovementSnapshot(state) {
   state.movementSnapshot = {};
   for (const u of state.units) state.movementSnapshot[u.id] = { col: u.col, row: u.row };
@@ -96,7 +95,7 @@ function stateFor(state, role) {
   };
 }
 
-// ─── Weapon priority / combat helpers ──────────────────────────────────────────────────
+// ─── Weapon priority / combat helpers ────────────────────────────────────────
 const WEAPON_PRIORITY = {
   surface: ['ascm', 'asbm', 'mss', 'torpedo', 'airAttack', 'navalGun'],
   submarine: ['asw', 'torpedo'],
@@ -117,7 +116,7 @@ function selectBestWeapon(attacker, target, dist) {
   return null;
 }
 
-// ─── Unit factory ─────────────────────────────────────────────────────────────────
+// ─── Unit factory ─────────────────────────────────────────────────────────────
 function makeUnit(team, spec) {
   const pos = spec.position || spec.start || { col: 0, row: 0 };
   const weapons = spec.weapons ? JSON.parse(JSON.stringify(spec.weapons)) : {};
@@ -165,7 +164,7 @@ function newGame(customOB) {
   return state;
 }
 
-// ─── Movement ───────────────────────────────────────────────────────────────────────────
+// ─── Movement ─────────────────────────────────────────────────────────────────
 
 /** Validates a `commit_moves` payload for `team`. Returns {ok:true} or {ok:false, error}. */
 function validateMoves(state, team, moves) {
@@ -239,7 +238,7 @@ function applyMovementApproval(state, overrides) {
   state.log.unshift('Movimentos aprovados. Fase de Combate iniciada. Declare seus ataques.');
 }
 
-// ─── Combat system (resolução em pulso único pela equação de salva) ──────
+// ─── Combat system (resolução em pulso único pela equação de salva) ──────────
 const SALVO_SIZE = { ascm: 2, mss: 2, torpedo: 1, lacm: 1, asbm: 1 };
 
 function buildCombatQueue(state) {
@@ -352,17 +351,12 @@ function applyCombatApproval(state, hpChanges) {
 /**
  * Determines the game winner, if any.
  *
- * KCV Aurelius Magnus (RED-GBPA) destroyed -> automatic, decisive defeat
- * for Red (briefing: "Perda do KCV Aurelius Magnus = derrota automática
- * do Vermelho"), independent of the generic offense-exhaustion check.
- *
- * Otherwise: a side loses if no surviving unit retains any offensive
- * means (attackRange, weapon stock, or offensive capability).
+ * A side loses if no surviving unit retains any offensive means
+ * (attackRange, weapon stock, or offensive capability) -- i.e. its forces
+ * have been rendered combat-ineffective in general. No single unit (e.g.
+ * the Red carrier strike group) is special-cased.
  */
 function checkWinner(state) {
-  const kcv = state.units.find(u => u.id === KCV_UNIT_ID);
-  if (kcv && kcv.hp <= 0) return 'blue';
-
   const hasOffense = u => Object.values(u.attackRange || {}).some(v => v > 0) || Object.values(u.weapons || {}).some(w => w.quantity > 0) || Object.values(u.capabilities || {}).some(v => v > 0);
   const b = state.units.some(u => u.team === 'blue' && u.hp > 0 && hasOffense(u));
   const r = state.units.some(u => u.team === 'red' && u.hp > 0 && hasOffense(u));

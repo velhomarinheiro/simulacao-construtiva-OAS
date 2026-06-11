@@ -46,11 +46,6 @@ const CAPABILITY_FACTORS = {
 
 const FACTOR_KEYS = Object.keys(CAPABILITY_FACTORS);
 
-// "KCV Aurelius Magnus" (briefing): Grupo de Batalha do Porta-Aviões
-// Vermelho. Sua perda/destruição encerra o jogo com derrota automática
-// do Vermelho (E1_kcv = 1, decisivo).
-const KCV_UNIT_ID = 'RED-GBPA';
-
 // E2_vp: pontos de valor de infraestrutura crítica (plataformas offshore).
 const FPSO_UNIT_IDS = ['BLUE-FPSO1', 'BLUE-FPSO2', 'BLUE-FPSO3', 'BLUE-FPSO4'];
 
@@ -94,7 +89,6 @@ function applyCapabilityConfig(baseOB, factors) {
 module.exports = {
   CAPABILITY_FACTORS,
   FACTOR_KEYS,
-  KCV_UNIT_ID,
   FPSO_UNIT_IDS,
   PORT_UNIT_IDS,
   isActive,
