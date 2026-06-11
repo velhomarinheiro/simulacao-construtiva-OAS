@@ -1,0 +1,44 @@
+'use strict';
+
+/**
+ * rng.js
+ * ======
+ *
+ * Deterministic seeded PRNG (mulberry32), per "Briefing de Construção"
+ * §13 (referência de implementação). Used by the batch runner so that the
+ * same seed always reproduces the same sequence of bot decisions, giving
+ * the PBC dataset the determinism property required by the acceptance
+ * criteria ("mesmo seed -> mesmo resultado").
+ *
+ * The salvo-equation combat resolution itself (shared/combat_engine.js,
+ * shared/salvo_engine/*) is fully deterministic (expected-value kernels,
+ * no dice) — it does not consume the RNG. The RNG exists for any
+ * stochastic tie-breaking in bot decision policies (shared/bot/*) and for
+ * recording the seed alongside each batch run in the dataset.
+ */
+
+/**
+ * @param {number} seed  32-bit unsigned integer seed
+ * @returns {() => number} function returning a float in [0, 1)
+ */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Returns an integer in [min, max] (inclusive), drawn from `rng`. */
+function randInt(rng, min, max) {
+  return min + Math.floor(rng() * (max - min + 1));
+}
+
+/** Picks a uniformly random element from `arr` using `rng`. */
+function pick(rng, arr) {
+  return arr[randInt(rng, 0, arr.length - 1)];
+}
+
+module.exports = { mulberry32, randInt, pick };
