@@ -1,363 +1,385 @@
 'use strict';
-
-const express = require('express');
-const http = require('http');
-const path = require('path');
+const express  = require('express');
+const http     = require('http');
 const { Server } = require('socket.io');
-
+const path     = require('path');
+const { ORDER_OF_BATTLE }  = require('./shared/order_of_battle');
 const {
-  newGame,
-  GRID_W,
-  GRID_H,
-  commitMoves,
-  finalizeMovementPhase,
-  applyMovementApproval,
-  declareAttacks,
-  buildCombatQueue,
-  resolveCombatQueue,
-  finishCombatPhase,
-  applyCombatApproval,
-  stateFor,
-  applyFactorAblation,
+  newGame, stateFor, genUnitId, makeUnit,
+  validateMoves, applyMoves, finalizeMovementPhase, applyMovementApproval,
+  buildCombatQueue, resolveCombatQueue, finishCombatPhase, applyCombatApproval,
 } = require('./shared/game_engine');
-
+const {
+  applyCapabilityConfig, CAPABILITY_FACTORS, FACTOR_KEYS, totalCost, countActive,
+} = require('./shared/capability_factors');
 const { decideMovement, decideAttacks } = require('./shared/bot/decision_engine');
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+const PORT   = process.env.PORT || 3000;
+const { GRID_W, GRID_H } = require('./shared/hexgrid');
 
-app.use(express.static(path.join(__dirname, 'public')));
+// ─── Server ───────────────────────────────────────────────────────────────────
+const app=express();
+const server=http.createServer(app);
+const io=new Server(server,{cors:{origin:'*'}});
 
-app.get('/game', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'game.html'));
-});
+app.use(express.static(path.join(__dirname,'public')));
+app.get('/',(_, res)=>res.sendFile(path.join(__dirname,'public','index.html')));
+app.get('/game',(_, res)=>res.sendFile(path.join(__dirname,'public','game.html')));
 
-const rooms = new Map();
+const rooms=new Map();
+function genId(){return Math.random().toString(36).slice(2,8).toUpperCase();}
 
-function genRoomCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code;
-  do {
-    code = '';
-    for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
-  } while (rooms.has(code));
-  return code;
-}
-
-function roomSummary(room) {
-  return {
-    id: room.id,
-    blueConnected: !!room.players.blue,
-    redConnected: !!room.players.red,
-    bots: { ...room.bots },
+function broadcast(room,event='game_update',extraPayload=null){
+  if(!room.state) return;
+  const emit=(pid,role)=>{
+    if(!pid) return;
+    const state=stateFor(room.state,role);
+    if(event==='game_update') io.to(pid).emit('game_update',state);
+    else if(event==='game_over'){io.to(pid).emit('game_over',{winner:room.state.winner,state});}
   };
+  emit(room.players.blue,'blue');
+  emit(room.players.red,'red');
+  emit(room.players.facilitator,'facilitator');
 }
 
-function broadcastState(room) {
-  for (const role of ['blue', 'red', 'facilitator']) {
-    const socketId = room.players[role];
-    if (!socketId) continue;
-    const sock = io.sockets.sockets.get(socketId);
-    if (!sock) continue;
-    sock.emit('state_update', {
-      state: stateFor(room.state, role),
-      bots: { ...room.bots },
-    });
+function facBroadcast(room){
+  if(!room.state||!room.players.facilitator) return;
+  io.to(room.players.facilitator).emit('game_update',stateFor(room.state,'facilitator'));
+}
+
+// ─── Combat resolution wrappers (pure logic in shared/game_engine, I/O here) ──
+function endCombatPhase(room){
+  const state=room.state;
+  const{winner}=finishCombatPhase(state);
+  if(winner){
+    broadcast(room,'game_over',{winner,state:null});
+    return;
   }
+  if(room.players.facilitator) io.to(room.players.facilitator).emit('combat_approval_needed',stateFor(state,'facilitator'));
+  broadcast(room);
 }
 
-function broadcastSummary(room) {
-  for (const role of ['blue', 'red', 'facilitator']) {
-    const socketId = room.players[role];
-    if (!socketId) continue;
-    const sock = io.sockets.sockets.get(socketId);
-    if (!sock) continue;
-    sock.emit('room_summary', roomSummary(room));
-  }
+function runCombatQueue(room){
+  const state=room.state;
+  resolveCombatQueue(state);
+  if(room.players.blue) io.to(room.players.blue).emit('combat_results',{results:state.combatQueue});
+  if(room.players.red)  io.to(room.players.red ).emit('combat_results',{results:state.combatQueue});
+  if(room.players.facilitator) io.to(room.players.facilitator).emit('combat_results',{results:state.combatQueue});
+  endCombatPhase(room);
 }
 
-function commitMovesForTeam(room, team, moves) {
-  room.state = commitMoves(room.state, team, moves);
-}
+// ─── Jogador digital (IA) — assume equipes sem jogador humano conectado ───────
+function commitMovesForTeam(room,team,moves){
+  const{state}=room;
+  const validation=validateMoves(state,team,moves);
+  applyMoves(state,team,validation.ok?moves:[]);
 
-function declareAttacksForTeam(room, team, attacks) {
-  room.state = declareAttacks(room.state, team, attacks);
-}
-
-function runBotsForPhase(room) {
-  const state = room.state;
-  if (state.phase === 'movement') {
-    for (const team of ['blue', 'red']) {
-      if (room.bots[team] && !state.movesCommitted?.[team]) {
-        const filtered = stateFor(state, team);
-        const moves = decideMovement(filtered, team);
-        commitMovesForTeam(room, team, moves);
-      }
+  if(state.blueDone&&state.redDone){
+    const{navalEmpty,airLost}=finalizeMovementPhase(state);
+    for(const u of navalEmpty){
+      const pid=room.players[u.team];
+      if(pid) io.to(pid).emit('fuel_alert',{unitId:u.id,name:u.name,type:'naval_empty'});
     }
-    maybeFinalizeMovement(room);
-  } else if (state.phase === 'combat') {
-    for (const team of ['blue', 'red']) {
-      if (room.bots[team] && !state.attacksDeclared?.[team]) {
-        const filtered = stateFor(state, team);
-        const attacks = decideAttacks(filtered, team);
-        declareAttacksForTeam(room, team, attacks);
-      }
+    for(const u of airLost){
+      const pid=room.players[u.team];
+      if(pid) io.to(pid).emit('fuel_alert',{unitId:u.id,name:u.name,type:'air_lost'});
     }
-    maybeResolveCombat(room);
+    if(room.players.facilitator) io.to(room.players.facilitator).emit('movement_approval_needed',stateFor(state,'facilitator'));
+  }else{
+    const waiting=team==='blue'?'Força Vermelha':'Força Azul';
+    state.log.unshift(`${team==='blue'?'Força Azul':'Força Vermelha'} encerrou movimentação. Aguardando ${waiting}...`);
+  }
+  if(state.log.length>50) state.log=state.log.slice(0,50);
+  broadcast(room);
+}
+
+function declareAttacksForTeam(room,team,attacks){
+  const{state}=room;
+  if(team==='blue') state.blueAttacks=attacks||[];else state.redAttacks=attacks||[];
+  state.log.unshift(`${team==='blue'?'Força Azul':'Força Vermelha'} confirmou ${(attacks||[]).length} ataque(s).`);
+  if(state.blueAttacks!==null&&state.redAttacks!==null){
+    state.log.unshift('── Resolução de Combate ──');
+    state.combatQueue=buildCombatQueue(state);
+    broadcast(room);
+    if(state.combatQueue.length===0) endCombatPhase(room);
+    else runCombatQueue(room);
+  }else{broadcast(room);}
+}
+
+// Executa as ações do(s) jogador(es) digitais para a fase atual, se houver
+// equipe(s) sem jogador humano conectado (room.bots).
+function runBotsForPhase(room){
+  const{state}=room;
+  if(!state) return;
+  if(state.phase==='movement'){
+    for(const team of ['blue','red']){
+      if(!room.bots[team]) continue;
+      if(state[team==='blue'?'blueDone':'redDone']) continue;
+      commitMovesForTeam(room,team,decideMovement(stateFor(state,team),team));
+    }
+  }else if(state.phase==='combat'){
+    for(const team of ['blue','red']){
+      if(!room.bots[team]) continue;
+      if(state[team==='blue'?'blueAttacks':'redAttacks']!==null) continue;
+      declareAttacksForTeam(room,team,decideAttacks(stateFor(state,team),team));
+    }
   }
 }
 
-function maybeFinalizeMovement(room) {
-  const state = room.state;
-  if (state.phase !== 'movement') return;
-  if (state.movesCommitted?.blue && state.movesCommitted?.red) {
-    room.state = finalizeMovementPhase(room.state);
-  }
-}
+// ─── Socket connections ───────────────────────────────────────────────────────
+io.on('connection',socket=>{
+  console.log('+ connect',socket.id);
 
-function maybeResolveCombat(room) {
-  const state = room.state;
-  if (state.phase !== 'combat') return;
-  if (state.attacksDeclared?.blue && state.attacksDeclared?.red) {
-    room.state = buildCombatQueue(room.state);
-    const { state: newState, results } = resolveCombatQueue(room.state);
-    room.state = newState;
-    room.pendingCombatResults = results;
-  }
-}
-
-io.on('connection', (socket) => {
-  socket.on('create_room', () => {
-    const id = genRoomCode();
-    const room = {
+  // ── Facilitador cria a sala ──────────────────────────────────────────────
+  socket.on('create_room',()=>{
+    const id=genId();
+    const baseOB=JSON.parse(JSON.stringify(ORDER_OF_BATTLE));
+    const capabilityFactors=Object.fromEntries(FACTOR_KEYS.map(k=>[k,true]));
+    const room={
       id,
-      players: { blue: null, red: null, facilitator: socket.id },
-      state: null,
-      baseOB: null,
-      customOB: null,
-      capabilityFactors: null,
-      seed: null,
-      bots: { blue: false, red: false },
-      pendingCombatResults: null,
+      players:{blue:null,red:null,facilitator:socket.id},
+      state:null,
+      baseOB,
+      customOB:JSON.parse(JSON.stringify(baseOB)),
+      capabilityFactors,
+      seed:undefined,
+      bots:{blue:false,red:false},
     };
-    rooms.set(id, room);
-    socket.data.roomId = id;
-    socket.data.role = 'facilitator';
+    rooms.set(id,room);
+    socket.data.roomId=id; socket.data.role='facilitator';
     socket.join(id);
-    socket.emit('room_created', { roomId: id });
-    broadcastSummary(room);
+    socket.emit('room_created',{
+      roomId:id,role:'facilitator',ob:room.customOB,
+      capabilityFactors,capabilityFactorDefs:CAPABILITY_FACTORS,
+    });
   });
 
-  socket.on('join_room', ({ roomId, role }) => {
-    const room = rooms.get(roomId);
-    if (!room) {
-      socket.emit('join_error', { message: 'Sala não encontrada.' });
-      return;
+  // ── Jogadores entram com escolha de equipe ───────────────────────────────
+  socket.on('join_room',({roomId,team})=>{
+    const room=rooms.get(roomId?.toUpperCase?.());
+    if(!room){socket.emit('join_error','Sala não encontrada.');return;}
+    if(!team||!['blue','red'].includes(team)){socket.emit('join_error','Selecione Azul ou Vermelho.');return;}
+    if(room.players[team]){socket.emit('join_error',`Equipe ${team==='blue'?'Azul':'Vermelha'} já ocupada.`);return;}
+
+    room.players[team]=socket.id;
+    if(room.bots) room.bots[team]=false; // jogador humano assume a equipe controlada pela IA
+    socket.data.roomId=room.id; socket.data.role=team;
+    socket.join(room.id);
+    socket.emit('join_success',{role:team,roomId:room.id});
+
+    // Notifica facilitador
+    if(room.players.facilitator){
+      io.to(room.players.facilitator).emit('player_joined',{
+        team,
+        blueReady:!!room.players.blue,
+        redReady:!!room.players.red,
+      });
     }
-    if (role !== 'blue' && role !== 'red') {
-      socket.emit('join_error', { message: 'Papel inválido.' });
-      return;
+    // Se o jogo já começou, envia estado atual ao novo jogador
+    if(room.state){
+      socket.emit('game_start',{role:team,state:stateFor(room.state,team)});
     }
-    if (room.players[role]) {
-      socket.emit('join_error', { message: 'Equipe já conectada.' });
-      return;
-    }
-    room.players[role] = socket.id;
-    room.bots[role] = false;
-    socket.data.roomId = roomId;
-    socket.data.role = role;
-    socket.join(roomId);
-    socket.emit('joined', { roomId, role });
-    if (room.state) {
-      broadcastState(room);
-    }
-    broadcastSummary(room);
   });
 
-  socket.on('facilitator_config', ({ roomId, baseOB, customOB, capabilityFactors, seed }) => {
-    const room = rooms.get(roomId);
-    if (!room || room.players.facilitator !== socket.id) return;
-    room.baseOB = baseOB;
-    room.customOB = customOB;
-    room.capabilityFactors = capabilityFactors;
-    room.seed = seed;
+  // ── Config: facilitador atualiza a OB ────────────────────────────────────
+  socket.on('update_ob',({ob})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room||socket.data.role!=='facilitator') return;
+    room.customOB=ob;
+    socket.emit('ob_updated',{ok:true});
   });
 
-  socket.on('start_game', ({ roomId }) => {
-    const room = rooms.get(roomId);
-    if (!room || room.players.facilitator !== socket.id) return;
+  // ── Config: facilitador ajusta os fatores de capacidade (PBC) ────────────
+  socket.on('set_capability_factors',({factors})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room||socket.data.role!=='facilitator') return;
+    room.capabilityFactors={...room.capabilityFactors,...(factors||{})};
+    room.customOB=applyCapabilityConfig(room.baseOB,room.capabilityFactors);
+    socket.emit('ob_updated',{
+      ok:true,ob:room.customOB,
+      custoTotal:totalCost(room.capabilityFactors),
+      nCapacidades:countActive(room.capabilityFactors),
+    });
+  });
 
-    room.bots.blue = !room.players.blue;
-    room.bots.red = !room.players.red;
-
-    let ob = room.customOB || room.baseOB;
-    if (room.capabilityFactors) {
-      ob = applyFactorAblation(ob, room.capabilityFactors);
-    }
-    room.state = newGame(ob, { seed: room.seed });
-    room.pendingCombatResults = null;
-
+  // ── Config: facilitador inicia o jogo ────────────────────────────────────
+  socket.on('start_game',({seed}={})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room||socket.data.role!=='facilitator') return;
+    room.bots={blue:!room.players.blue,red:!room.players.red};
+    const parsedSeed=Number(seed);
+    room.seed=(seed===null||seed===undefined||seed===''||Number.isNaN(parsedSeed))?undefined:parsedSeed;
+    room.state=newGame(room.customOB,{seed:room.seed});
+    if(room.players.blue) io.to(room.players.blue).emit('game_start',{role:'blue',state:stateFor(room.state,'blue')});
+    if(room.players.red ) io.to(room.players.red ).emit('game_start',{role:'red', state:stateFor(room.state,'red')});
+    socket.emit('game_start',{role:'facilitator',state:stateFor(room.state,'facilitator')});
     runBotsForPhase(room);
-
-    broadcastState(room);
-    broadcastSummary(room);
   });
 
-  socket.on('commit_moves', ({ roomId, moves }) => {
-    const room = rooms.get(roomId);
-    if (!room || !room.state) return;
-    const team = socket.data.role;
-    if (team !== 'blue' && team !== 'red') return;
-    if (room.state.phase !== 'movement') return;
-    if (room.state.movesCommitted?.[team]) return;
+  // ── Movimentação ─────────────────────────────────────────────────────────
+  socket.on('commit_moves',({moves})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state) return;
+    const{state}=room,{role}=socket.data;
+    const team=role; // 'blue' or 'red'
+    if(!['blue','red'].includes(team)) return;
 
-    commitMovesForTeam(room, team, moves);
-    maybeFinalizeMovement(room);
+    if(state.phase!=='movement'){socket.emit('action_error','Não é a fase de movimentação.');return;}
+    if(state[team==='blue'?'blueDone':'redDone']){socket.emit('action_error','Você já encerrou a movimentação.');return;}
 
-    if (room.state.phase === 'movement') {
-      runBotsForPhase(room);
-    }
+    const validation=validateMoves(state,team,moves);
+    if(!validation.ok){socket.emit('action_error',validation.error);return;}
 
-    broadcastState(room);
+    commitMovesForTeam(room,team,moves);
   });
 
-  socket.on('approve_movements', ({ roomId }) => {
-    const room = rooms.get(roomId);
-    if (!room || !room.state || room.players.facilitator !== socket.id) return;
-    if (room.state.phase !== 'movement_approval') return;
+  // ── Facilitador aprova movimentos (com opção de reposicionamento) ─────────
+  socket.on('approve_movements',({overrides})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state||socket.data.role!=='facilitator') return;
+    const{state}=room;
+    if(state.phase!=='movement_approval'){socket.emit('action_error','Não é a fase de aprovação de movimentos.');return;}
 
-    room.state = applyMovementApproval(room.state);
+    applyMovementApproval(state,overrides);
+    broadcast(room);
     runBotsForPhase(room);
-
-    broadcastState(room);
   });
 
-  socket.on('declare_attacks', ({ roomId, attacks }) => {
-    const room = rooms.get(roomId);
-    if (!room || !room.state) return;
-    const team = socket.data.role;
-    if (team !== 'blue' && team !== 'red') return;
-    if (room.state.phase !== 'combat') return;
-    if (room.state.attacksDeclared?.[team]) return;
+  // ── Combate: declaração de ataques ───────────────────────────────────────
+  socket.on('declare_attacks',attacks=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state) return;
+    const{state}=room,{role}=socket.data;
+    const team=role;
+    if(!['blue','red'].includes(team)) return;
+    if(state.phase!=='combat'){socket.emit('action_error','Não é a fase de combate.');return;}
+    declareAttacksForTeam(room,team,attacks);
+  });
 
-    declareAttacksForTeam(room, team, attacks);
-    maybeResolveCombat(room);
+  // ── Facilitador aprova resultados de combate ──────────────────────────────
+  socket.on('approve_combat',({hpChanges})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state||socket.data.role!=='facilitator') return;
+    const{state}=room;
+    if(state.phase!=='combat_approval'){socket.emit('action_error','Não é a fase de aprovação de combate.');return;}
 
-    if (room.state.phase === 'combat') {
-      runBotsForPhase(room);
+    const{winner}=applyCombatApproval(state,hpChanges);
+    if(winner){
+      broadcast(room,'game_over');
+      return;
     }
+    broadcast(room);
+    runBotsForPhase(room);
+  });
 
-    broadcastState(room);
+  // ── Mensagens do Facilitador ──────────────────────────────────────────────
+  socket.on('facilitator_message',({to,text})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state||socket.data.role!=='facilitator') return;
+    if(!text?.trim()) return;
 
-    if (room.pendingCombatResults) {
-      for (const role of ['blue', 'red', 'facilitator']) {
-        const socketId = room.players[role];
-        if (!socketId) continue;
-        const sock = io.sockets.sockets.get(socketId);
-        if (!sock) continue;
-        sock.emit('combat_results', { results: room.pendingCombatResults });
-      }
-      room.pendingCombatResults = null;
+    const msg={
+      id:`MSG-${Date.now()}`,
+      from:'facilitator',to,
+      text:text.trim(),
+      timestamp:new Date().toISOString(),
+      replies:[],
+    };
+    room.state.messages.push(msg);
+    room.state.log.unshift(`📢 Facilitador → ${to==='all'?'Todos':to==='blue'?'Azul':'Vermelho'}: "${text.trim().slice(0,40)}"`);
+
+    const sendTo=(pid)=>{if(pid) io.to(pid).emit('facilitator_message',msg);};
+    if(to==='all'||to==='blue') sendTo(room.players.blue);
+    if(to==='all'||to==='red')  sendTo(room.players.red);
+    socket.emit('message_sent',{msgId:msg.id});
+    facBroadcast(room);
+  });
+
+  socket.on('player_reply',({messageId,text})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state) return;
+    const{role}=socket.data;
+    if(!['blue','red'].includes(role)) return;
+    if(!text?.trim()) return;
+    const msg=room.state.messages.find(m=>m.id===messageId);
+    if(!msg) return;
+    const reply={from:role,text:text.trim(),timestamp:new Date().toISOString()};
+    msg.replies.push(reply);
+    room.state.log.unshift(`↩ ${role==='blue'?'Azul':'Vermelho'}: "${text.trim().slice(0,40)}"`);
+    if(room.players.facilitator) io.to(room.players.facilitator).emit('player_reply',{messageId,reply});
+    facBroadcast(room);
+  });
+
+  // ── Gerenciamento de unidades pelo facilitador ────────────────────────────
+  socket.on('facilitator_manage_unit',({action,unitId,data})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state||socket.data.role!=='facilitator') return;
+    const{state}=room;
+
+    if(action==='add'){
+      // data = spec object
+      const team=data.team||'neutral';
+      const newId=genUnitId(team);
+      const spec={...data,id:newId,position:{col:data.col??8,row:data.row??5}};
+      const unit=makeUnit(team,spec);
+      state.units.push(unit);
+      state.log.unshift(`➕ Facilitador adicionou ${unit.name} (${team})`);
+      broadcast(room);
+    }else if(action==='edit'&&unitId){
+      const unit=state.units.find(u=>u.id===unitId);
+      if(!unit) return;
+      if(data.hp!=null) unit.hp=Math.max(0,Math.min(unit.maxHp,Number(data.hp)));
+      if(data.col!=null&&data.row!=null){unit.col=Number(data.col);unit.row=Number(data.row);}
+      if(data.name) unit.name=data.name;
+      if(data.status) unit.customStatus=data.status;
+      state.log.unshift(`✏ Facilitador editou ${unit.name}`);
+      broadcast(room);
+    }else if(action==='remove'&&unitId){
+      const unit=state.units.find(u=>u.id===unitId);
+      if(!unit) return;
+      unit.hp=0;
+      state.log.unshift(`❌ Facilitador removeu ${unit.name}`);
+      broadcast(room);
     }
   });
 
-  socket.on('approve_combat', ({ roomId }) => {
-    const room = rooms.get(roomId);
-    if (!room || !room.state || room.players.facilitator !== socket.id) return;
-    if (room.state.phase !== 'combat_approval') return;
-
-    room.state = finishCombatPhase(room.state);
-    room.state = applyCombatApproval(room.state);
-
-    if (room.state.phase === 'movement') {
-      runBotsForPhase(room);
-    }
-
-    broadcastState(room);
-  });
-
-  socket.on('facilitator_reposition', ({ roomId, unitId, col, row }) => {
-    const room = rooms.get(roomId);
-    if (!room || !room.state || room.players.facilitator !== socket.id) return;
+  // ── Facilitador reposiciona unidade no mapa ───────────────────────────────
+  socket.on('facilitator_reposition',({unitId,col,row})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state||socket.data.role!=='facilitator') return;
     if(col<0||col>=GRID_W||row<0||row>=GRID_H) return;
-    const unit = room.state.units.find(u => u.id === unitId);
-    if (!unit) return;
-    unit.col = col;
-    unit.row = row;
-    broadcastState(room);
+    const unit=room.state.units.find(u=>u.id===unitId&&u.hp>0);
+    if(!unit) return;
+    unit.col=col;unit.row=row;
+    room.state.log.unshift(`📍 Facilitador moveu ${unit.name} → ${String.fromCharCode(65+col)}${row+1}`);
+    broadcast(room);
   });
 
-  socket.on('facilitator_message', ({ roomId, to, text }) => {
-    const room = rooms.get(roomId);
-    if (!room || room.players.facilitator !== socket.id) return;
-    const targets = to === 'all' ? ['blue', 'red'] : [to];
-    for (const role of targets) {
-      const socketId = room.players[role];
-      if (!socketId) continue;
-      const sock = io.sockets.sockets.get(socketId);
-      if (!sock) continue;
-      sock.emit('facilitator_message', { from: 'facilitator', text });
-    }
-  });
-
-  socket.on('player_message_reply', ({ roomId, text }) => {
-    const room = rooms.get(roomId);
-    if (!room) return;
-    const role = socket.data.role;
-    if (role !== 'blue' && role !== 'red') return;
-    const facSocketId = room.players.facilitator;
-    if (!facSocketId) return;
-    const sock = io.sockets.sockets.get(facSocketId);
-    if (!sock) return;
-    sock.emit('player_message_reply', { from: role, text });
-  });
-
-  socket.on('restart', ({ roomId }) => {
-    const room = rooms.get(roomId);
-    if (!room || room.players.facilitator !== socket.id) return;
-
-    room.bots.blue = !room.players.blue;
-    room.bots.red = !room.players.red;
-
-    let ob = room.customOB || room.baseOB;
-    if (room.capabilityFactors) {
-      ob = applyFactorAblation(ob, room.capabilityFactors);
-    }
-    room.state = newGame(ob, { seed: room.seed });
-    room.pendingCombatResults = null;
-
+  // ── Restart ───────────────────────────────────────────────────────────────
+  socket.on('restart',()=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room||socket.data.role!=='facilitator') return;
+    room.bots={blue:!room.players.blue,red:!room.players.red};
+    room.state=newGame(room.customOB,{seed:room.seed});
+    if(room.players.blue) io.to(room.players.blue).emit('game_start',{role:'blue',state:stateFor(room.state,'blue')});
+    if(room.players.red)  io.to(room.players.red ).emit('game_start',{role:'red', state:stateFor(room.state,'red')});
+    socket.emit('game_start',{role:'facilitator',state:stateFor(room.state,'facilitator')});
     runBotsForPhase(room);
-
-    broadcastState(room);
-    broadcastSummary(room);
   });
 
-  socket.on('disconnect', () => {
-    const roomId = socket.data.roomId;
-    const role = socket.data.role;
-    if (!roomId) return;
-    const room = rooms.get(roomId);
-    if (!room) return;
-
-    if (role === 'facilitator') {
-      rooms.delete(roomId);
-      return;
-    }
-
-    if (room.players[role] === socket.id) {
-      room.players[role] = null;
-      if (room.state) {
-        room.bots[role] = true;
-        runBotsForPhase(room);
-        broadcastState(room);
-      }
-      broadcastSummary(room);
-    }
+  // ── Disconnect ────────────────────────────────────────────────────────────
+  socket.on('disconnect',()=>{
+    const{roomId,role}=socket.data;if(!roomId) return;
+    const room=rooms.get(roomId);if(!room) return;
+    console.log(`- disconnect ${role} from ${roomId}`);
+    room.players[role]=null;
+    // Notify remaining players
+    const notify=pid=>{if(pid) io.to(pid).emit('player_disconnected',{role});};
+    if(role==='facilitator'){notify(room.players.blue);notify(room.players.red);}
+    else{notify(room.players.facilitator);notify(room.players[role==='blue'?'red':'blue']);}
+    // Limpar sala se facilitador saiu
+    if(role==='facilitator') rooms.delete(roomId);
   });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Servidor rodando em http://localhost:${PORT}`);
-});
+server.listen(PORT,()=>console.log(`Servidor em http://localhost:${PORT}`));
