@@ -353,10 +353,14 @@ h2 {
 .btn-action.blue:hover  { background: var(--blue); box-shadow: 0 0 20px rgba(33,150,243,0.3); }
 .btn-action.red   { background: #b71c1c; border-color: var(--red-l); color: #fff; }
 .btn-action.red:hover   { background: var(--red); box-shadow: 0 0 20px rgba(229,57,53,0.3); }
+.btn-action.gold  { background: #3a2800; border-color: var(--gold); color: var(--gold-l); }
+.btn-action.gold:hover  { background: #5a4000; box-shadow: 0 0 20px rgba(201,168,76,0.3); }
 .btn-icon { font-size: 1.3rem; }
 .lobby-or { margin: 1rem 0; color: var(--text-dim); }
 
 .join-form { display: flex; flex-direction: column; gap: 0.75rem; }
+.join-btns-row { display: flex; gap: 0.75rem; }
+.join-btns-row .btn-action { flex: 1; }
 input[type=text] {
   background: rgba(10,30,50,0.9);
   border: 1px solid var(--border);

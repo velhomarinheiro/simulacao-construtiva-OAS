@@ -194,30 +194,28 @@
     <h2>INICIAR OPERAÇÃO</h2>
 
     <div id="lobby-menu" class="lobby-box">
-      <button id="btn-create" class="btn-action blue">
-        <span class="btn-icon">⚓</span>
-        Criar Nova Sala
-        <small>Você joga como Força Azul</small>
+      <button id="btn-create" class="btn-action gold">
+        <span class="btn-icon">★</span>
+        Criar Sala (Facilitador)
+        <small>Configura forças, fatores PBC e comanda a simulação</small>
       </button>
 
-      <div class="lobby-or">— ou —</div>
+      <div class="lobby-or">— ou entre com o código da sala —</div>
 
       <div class="join-form">
         <input id="room-input" type="text" maxlength="6" placeholder="CÓDIGO DA SALA" autocomplete="off">
-        <button id="btn-join" class="btn-action red">
-          <span class="btn-icon">⚔</span>
-          Entrar na Sala
-          <small>Você joga como Força Vermelha</small>
-        </button>
+        <div class="join-btns-row">
+          <button id="btn-join-blue" class="btn-action blue">
+            <span class="btn-icon">⚓</span>
+            Equipe Azul
+          </button>
+          <button id="btn-join-red" class="btn-action red">
+            <span class="btn-icon">⚔</span>
+            Equipe Vermelha
+          </button>
+        </div>
       </div>
       <p id="lobby-err" class="lobby-err hidden"></p>
-    </div>
-
-    <div id="lobby-waiting" class="lobby-box waiting hidden">
-      <p>Sala criada com sucesso. Código:</p>
-      <div id="room-display" class="room-code">——</div>
-      <p class="hint">Compartilhe este código com seu oponente</p>
-      <div class="spinner">Aguardando oponente...</div>
     </div>
   </div>
 </section>
@@ -227,25 +225,30 @@
 </footer>
 
 <script>
-  const btnCreate = document.getElementById('btn-create');
-  const btnJoin   = document.getElementById('btn-join');
-  const roomInput = document.getElementById('room-input');
-  const lobbyErr  = document.getElementById('lobby-err');
+  const btnCreate   = document.getElementById('btn-create');
+  const btnJoinBlue = document.getElementById('btn-join-blue');
+  const btnJoinRed  = document.getElementById('btn-join-red');
+  const roomInput   = document.getElementById('room-input');
+  const lobbyErr    = document.getElementById('lobby-err');
 
   btnCreate.addEventListener('click', () => {
     sessionStorage.setItem('pendingAction', 'create');
     location.href = '/game';
   });
 
-  btnJoin.addEventListener('click', () => {
+  function joinAs(team) {
     const c = roomInput.value.trim().toUpperCase();
     if (!c) { showErr('Digite o código da sala.'); return; }
     sessionStorage.setItem('pendingAction', 'join');
     sessionStorage.setItem('pendingCode', c);
+    sessionStorage.setItem('pendingTeam', team);
     location.href = '/game';
-  });
+  }
 
-  roomInput.addEventListener('keydown', e => { if (e.key === 'Enter') btnJoin.click(); });
+  btnJoinBlue.addEventListener('click', () => joinAs('blue'));
+  btnJoinRed.addEventListener('click', () => joinAs('red'));
+
+  roomInput.addEventListener('keydown', e => { if (e.key === 'Enter') btnJoinBlue.click(); });
 
   document.querySelector('.scroll-down').addEventListener('click', e => {
     e.preventDefault();
