@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const { resolveEngagement } = require('../combat_engine');
 const { SALVO_KERNELS } = require('../combat_config');
+const { mulberry32 } = require('../rng');
 
 function makeUnit({ id, category, team = 'blue', hp = 10, weapons = {} } = {}) {
   return { id, category, team, hp, weapons };
@@ -113,6 +114,75 @@ test('torpedo vs submarine ignores defender airDefense (not interceptable)', () 
 
   assert.equal(out.pDefense, 0);
   assert.ok(Math.abs(out.expectedLoss - SALVO_KERNELS.torpedo.submarine * 2) < 1e-9);
+});
+
+test('without rng, actualLoss equals expectedLoss and stochastic is null', () => {
+  const attacker = makeUnit({ id: 'B1', category: 'surface', weapons: { ascm: { quantity: 4 } } });
+  const defender = makeUnit({
+    id: 'R1', category: 'surface', hp: 100,
+    weapons: { airDefense: { quantity: 6 } },
+  });
+
+  const out = resolveEngagement({ attacker, defender, weaponType: 'ascm', amount: 4, distance: 5 });
+
+  assert.equal(out.stochastic, null);
+  assert.ok(Math.abs(out.actualLoss - out.expectedLoss) < 1e-12);
+  assert.ok(Math.abs(defender.hp - (100 - out.expectedLoss)) < 1e-12);
+});
+
+test('with rng, same seed reproduces the same actualLoss', () => {
+  function run(seed) {
+    const attacker = makeUnit({ id: 'B1', category: 'surface', weapons: { ascm: { quantity: 4 } } });
+    const defender = makeUnit({
+      id: 'R1', category: 'surface', hp: 100,
+      weapons: { airDefense: { quantity: 6 } },
+    });
+    return resolveEngagement({ attacker, defender, weaponType: 'ascm', amount: 4, distance: 5, rng: mulberry32(seed) });
+  }
+
+  const a = run(12345);
+  const b = run(12345);
+
+  assert.ok(a.stochastic !== null);
+  assert.equal(a.actualLoss, b.actualLoss);
+  assert.deepStrictEqual(a.stochastic, b.stochastic);
+});
+
+test('with rng, different seeds produce varying actualLoss across replicas', () => {
+  function run(seed) {
+    const attacker = makeUnit({ id: 'B1', category: 'surface', weapons: { ascm: { quantity: 4 } } });
+    const defender = makeUnit({
+      id: 'R1', category: 'surface', hp: 100,
+      weapons: { airDefense: { quantity: 6 } },
+    });
+    return resolveEngagement({ attacker, defender, weaponType: 'ascm', amount: 4, distance: 5, rng: mulberry32(seed) }).actualLoss;
+  }
+
+  const losses = Array.from({ length: 20 }, (_, i) => run(1000 + i));
+  const distinct = new Set(losses);
+
+  assert.ok(distinct.size > 1, 'expected actualLoss to vary across seeds');
+});
+
+test('with rng, mean actualLoss over many replicas approximates expectedLoss (unbiased)', () => {
+  const reference = resolveEngagement({
+    attacker: makeUnit({ id: 'B1', category: 'surface', weapons: { ascm: { quantity: 4 } } }),
+    defender: makeUnit({ id: 'R1', category: 'surface', hp: 100, weapons: { airDefense: { quantity: 6 } } }),
+    weaponType: 'ascm', amount: 4, distance: 5,
+  });
+
+  const N = 2000;
+  let sum = 0;
+  for (let seed = 1; seed <= N; seed++) {
+    const attacker = makeUnit({ id: 'B1', category: 'surface', weapons: { ascm: { quantity: 4 } } });
+    const defender = makeUnit({ id: 'R1', category: 'surface', hp: 100, weapons: { airDefense: { quantity: 6 } } });
+    const out = resolveEngagement({ attacker, defender, weaponType: 'ascm', amount: 4, distance: 5, rng: mulberry32(seed) });
+    sum += out.actualLoss;
+  }
+  const mean = sum / N;
+
+  assert.ok(Math.abs(mean - reference.expectedLoss) < 0.5,
+    `mean actualLoss ${mean} should approximate expectedLoss ${reference.expectedLoss}`);
 });
 
 test('lacm interception aggregates airDefense and bmd', () => {

@@ -35,7 +35,6 @@ const { ORDER_OF_BATTLE } = require('../shared/order_of_battle');
 const { applyCapabilityConfig, FACTOR_KEYS } = require('../shared/capability_factors');
 const GE = require('../shared/game_engine');
 const { decideMovement, decideAttacks } = require('../shared/bot/decision_engine');
-const { mulberry32 } = require('../shared/rng');
 const { createCulminationTracker, computeFinalMetrics } = require('../shared/metrics');
 const { FACTORIAL_CONDITIONS, ABLATION_CONDITIONS } = require('./conditions');
 
@@ -66,11 +65,7 @@ function parseArgs(argv) {
  */
 function runGame(factors, seed, maxTurns) {
   const customOB = applyCapabilityConfig(ORDER_OF_BATTLE, factors);
-  const state = GE.newGame(customOB);
-  // Reserved for stochastic tie-breaking in future bot policies; recorded
-  // for reproducibility even though the current policies are deterministic.
-  // eslint-disable-next-line no-unused-vars
-  const rng = mulberry32(seed);
+  const state = GE.newGame(customOB, { seed });
 
   const culmination = createCulminationTracker();
   culmination.update(state);

@@ -103,27 +103,46 @@ I/O de rede). O CSV de saída segue as colunas de `Coleta_Fatorial` /
 `custo_total`, `E1_atrito`, `E1_kcv`, `E2_vp`, `E2_sloc`, `E3_culminancia`,
 `atrito_azul`), com colunas extras `ID`, `Replica`, `Semente` e `vencedor`.
 
-## 5. Limitação importante: determinismo e réplicas
+## 5. Variância estocástica entre réplicas
 
-O motor de combate (`shared/combat_engine.js`) usa a **equação de salva
-determinística** (núcleos de valor esperado, calibrados contra as tabelas de
-dano dos Apêndices A-B pela suíte de 60 testes existente) — não consome
-`Math.random()`. O motor de decisão (`shared/bot/decision_engine.js`) também
-é determinístico (sempre escolhe o alvo de maior `attackScore`).
+O motor de combate (`shared/combat_engine.js`) usa, por padrão, a **equação
+de salva determinística** (núcleos de valor esperado, calibrados contra as
+tabelas de dano dos Apêndices A-B pela suíte de 60 testes existente). Quando
+`newGame(ob, { seed })` recebe uma semente, `state.rng` passa a ser um PRNG
+seedado (`shared/rng.js#mulberry32`) e cada `resolveEngagement(...)` passa a
+amostrar um resultado **estocástico** por engajamento, em vez de aplicar
+diretamente o valor esperado:
 
-Consequência: **com os fatores de capacidade fixos, todas as réplicas de uma
-mesma condição produzem hoje o mesmo resultado** — a semente
-(`shared/rng.js`, `mulberry32`) é registrada no dataset para reprodutibilidade,
-mas ainda não introduz variância entre réplicas.
+1. Para cada interceptador elegível do defensor, sorteia-se um resultado
+   0/1 por tiro a partir da própria linha `D6_DAMAGE_TABLES[...].missile`
+   usada para calibrar `pDefense` (soma = `intercepted`).
+2. `leakers = max(0, launched - intercepted)`.
+3. Para cada "vazador", sorteia-se o dano a partir de
+   `D6_DAMAGE_TABLES[damageProfile][targetCategory]` (entradas `0`, inteiro
+   ou `'1d6'`), somando-se `sampledLoss`.
+4. `actualLoss = min(sampledLoss, hp_atual)` é o valor efetivamente aplicado
+   a `defender.hp` (registrado em `result.actualLoss`/`result.stochastic`).
 
-Isso satisfaz o critério de aceitação "mesmo seed → mesmo resultado", mas
-**não é suficiente** para as análises estatísticas do Apêndice G (teste t,
-Mann-Whitney, ANOVA, Cohen's d), que pressupõem variação amostral entre
-réplicas. Próximo passo recomendado: introduzir uma fonte de variação
-controlada e seedada via `shared/rng.js` — por exemplo, a **equação de salva
-estocástica** do briefing (`E[vazadas] = ...`, sorteando interceptações/acertos
-por tiro) como alternativa ao núcleo de valor esperado, e/ou desempates
-estocásticos de alvo no `decision_engine`. Essa mudança não foi feita nesta
-sessão por afetar a calibração coberta pelos 60 testes existentes — fica como
-decisão de projeto a ser validada com o orientador antes de alterar o motor
-de combate.
+Por construção, `E[actualLoss] == expectedLoss` (o núcleo de valor esperado
+original, ainda calculado e reportado em `result.expectedLoss`) — ou seja, a
+calibração coberta pela suíte de 60 testes não é alterada, apenas passa a
+existir variância amostral entre réplicas de uma mesma condição.
+
+**Compatibilidade**: `rng` é um parâmetro opcional de `resolveEngagement` e
+`options.seed` é opcional em `newGame`. O modo multiplayer (`server.js`)
+nunca passa `seed`, então `state.rng === null` e o combate permanece
+**determinístico e idêntico ao comportamento anterior** (todas as 60+ testes
+originais, que não passam `rng`, continuam verdes).
+
+**Réplicas em lote**: `tools/batch_runner.js` agora chama
+`GE.newGame(customOB, { seed })` com a semente de cada réplica (registrada na
+coluna `Semente` do CSV, como antes). Isso satisfaz o critério "mesmo seed →
+mesmo resultado" **e** introduz variação amostral entre réplicas distintas da
+mesma condição — pré-requisito para as análises estatísticas do Apêndice G
+(teste t, Mann-Whitney, ANOVA, Cohen's d).
+
+Testes adicionais cobrindo o novo comportamento estão em
+`shared/tests/combat_engine.test.js` (determinismo por seed, variação entre
+seeds, `E[actualLoss] ≈ expectedLoss`) e
+`shared/tests/game_engine_rng.test.js` (wiring de `state.rng` via
+`newGame`/`resolveQueuedEngagement`).

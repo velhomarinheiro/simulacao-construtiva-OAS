@@ -21,9 +21,25 @@
  * not rescaled by the target's stock); the resulting rawKernel is then
  * applied as a loss against the defender's actual `unit.strength`, capped
  * so it cannot go negative.
+ *
+ * `expectedLoss` (= clamped rawKernel) is always reported and is what gets
+ * applied to `defender.hp` when no `rng` is given (the historical,
+ * deterministic behaviour relied on by the 60-test suite and by
+ * server.js's interactive multiplayer mode).
+ *
+ * When a seeded `rng` (shared/rng.js#mulberry32) is supplied, an additional
+ * *stochastic* outcome is sampled per shot — "vazadores" (leakers: shots
+ * not intercepted, drawn from the same D6_DAMAGE_TABLES interception rows
+ * used to calibrate pDefense) and "acertos" (hits: damage rolled from the
+ * attacker's D6_DAMAGE_TABLES row for the defender's category). The sum of
+ * these per-shot rolls (`actualLoss`) is what gets applied to
+ * `defender.hp` instead of `expectedLoss`. By construction
+ * E[actualLoss] == expectedLoss, so this only adds variance between
+ * replicas of the same condition without shifting the calibrated mean.
  */
 
-const { COMBAT_CONFIG } = require('./combat_config');
+const { COMBAT_CONFIG, D6_DAMAGE_TABLES } = require('./combat_config');
+const { randInt } = require('./rng');
 const {
   UnitType,
   Force,
@@ -67,6 +83,18 @@ function expectedShotValue(damageProfile, targetCategory) {
 }
 
 /**
+ * Samples one D6_DAMAGE_TABLES row using `rng`: rolls 1-6, looks up the
+ * table entry for that face, and resolves a '1d6' entry to a further
+ * uniform 1-6 roll. Returns the resulting damage/intercept value (always
+ * a non-negative integer).
+ */
+function rollDamageTable(table, rng) {
+  const roll = randInt(rng, 1, 6);
+  const value = table[String(roll)];
+  return value === '1d6' ? randInt(rng, 1, 6) : (Number(value) || 0);
+}
+
+/**
  * Aggregate expected damage prevented by all of the defender's weapons
  * eligible to intercept `incomingProfile`.
  *
@@ -104,9 +132,12 @@ function resolveInterceptionExpectation({ defender, incomingProfile, launched, p
  * @param {number} amount  shots requested
  * @param {number} distance  hex distance attacker -> defender
  * @param {boolean} [defenderDisabled]  true skips interception (eg. 0 naval FP)
+ * @param {() => number} [rng]  seeded PRNG (shared/rng.js#mulberry32); when
+ *   given, `actualLoss` is sampled per-shot instead of equal to
+ *   `expectedLoss`, and is what gets applied to `defender.hp`.
  * @returns {object} EngagementResult
  */
-function resolveEngagement({ attacker, defender, weaponType, amount, distance, defenderDisabled = false }) {
+function resolveEngagement({ attacker, defender, weaponType, amount, distance, defenderDisabled = false, rng = null }) {
   const profile = COMBAT_CONFIG.weaponProfiles?.[weaponType];
   if (!profile) return { ok: false, reason: `Tipo de arma desconhecido: ${weaponType}` };
 
@@ -157,7 +188,25 @@ function resolveEngagement({ attacker, defender, weaponType, amount, distance, d
 
   const preHp = Math.max(0, defender.hp);
   const expectedLoss = Math.min(rawKernel, preHp);
-  const remainingHp = preHp - expectedLoss;
+
+  let actualLoss = expectedLoss;
+  let stochastic = null;
+  if (rng) {
+    let intercepted = 0;
+    for (const d of interceptionDetails) {
+      const defProfile = COMBAT_CONFIG.weaponProfiles?.[d.weapon];
+      const table = D6_DAMAGE_TABLES[defProfile?.damageProfile]?.missile;
+      if (table) for (let i = 0; i < d.shots; i++) intercepted += rollDamageTable(table, rng);
+    }
+    const leakers = Math.max(0, launched - intercepted);
+    const dmgTable = D6_DAMAGE_TABLES[profile.damageProfile]?.[defender.category];
+    let sampledLoss = 0;
+    if (dmgTable) for (let i = 0; i < leakers; i++) sampledLoss += rollDamageTable(dmgTable, rng);
+    actualLoss = Math.min(sampledLoss, preHp);
+    stochastic = { intercepted, leakers, sampledLoss };
+  }
+
+  const remainingHp = preHp - actualLoss;
   defender.hp = remainingHp;
   const destroyed = remainingHp <= DESTROYED_THRESHOLD;
 
@@ -177,6 +226,8 @@ function resolveEngagement({ attacker, defender, weaponType, amount, distance, d
     rawKernel,
     interception: { pDefenseTotal, details: interceptionDetails },
     expectedLoss,
+    actualLoss,
+    stochastic,
     remainingHp,
     destroyed,
   };
@@ -188,5 +239,6 @@ module.exports = {
   spendWeapon,
   expectedShotValue,
   resolveInterceptionExpectation,
+  rollDamageTable,
   resolveEngagement,
 };

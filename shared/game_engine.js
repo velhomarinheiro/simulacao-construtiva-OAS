@@ -30,6 +30,7 @@ const {
   GRID_W, GRID_H, T_DEEP,
   getTerrain, canEnterTerrain, rangeAgainst, hexDist,
 } = require('./hexgrid');
+const { mulberry32 } = require('./rng');
 
 // ─── Display type mapping ─────────────────────────────────────────────────────
 const COMP_DISPLAY_TYPE = {
@@ -147,7 +148,16 @@ function initialUnits(customOB) {
   return units;
 }
 
-function newGame(customOB) {
+/**
+ * @param {object} [customOB]  ORDER_OF_BATTLE-shaped object (default ORDER_OF_BATTLE)
+ * @param {object} [options]
+ * @param {number} [options.seed]  if given, `state.rng` is a seeded PRNG
+ *   (shared/rng.js#mulberry32) consumed by combat_engine.js to sample
+ *   stochastic engagement outcomes (variance between replicas of the same
+ *   condition). Without a seed, `state.rng` is null and combat resolution
+ *   stays fully deterministic (expected-value kernels only).
+ */
+function newGame(customOB, options = {}) {
   const state = {
     turn: 1, period: 'day', phase: 'movement',
     blueDone: false, redDone: false,
@@ -158,6 +168,7 @@ function newGame(customOB) {
     winner: null,
     movementSnapshot: {},
     combatQueue: [],
+    rng: options.seed != null ? mulberry32(options.seed) : null,
   };
   saveMovementSnapshot(state);
   markRefuelEligibility(state);
@@ -283,6 +294,7 @@ function resolveQueuedEngagement(state, engagement) {
   const eng = resolveEngagement({
     attacker: att, defender: def, weaponType: engagement.weaponType,
     amount: engagement.amount, distance: dist, defenderDisabled: isFuelDisabled(def),
+    rng: state.rng || undefined,
   });
 
   if (!eng.ok) {
@@ -293,8 +305,8 @@ function resolveQueuedEngagement(state, engagement) {
       ? ` (interceptação −${eng.interception.pDefenseTotal.toFixed(2)})` : '';
     if (eng.destroyed) {
       state.log.unshift(`💥 ${def.name} DESTRUÍDO por ${att.name} [${eng.weaponLabel}]`);
-    } else if (eng.expectedLoss > 1e-3) {
-      state.log.unshift(`✓ ${att.name} → ${def.name} −${eng.expectedLoss.toFixed(2)}SP [${eng.weaponLabel}${interceptStr}]`);
+    } else if (eng.actualLoss > 1e-3) {
+      state.log.unshift(`✓ ${att.name} → ${def.name} −${eng.actualLoss.toFixed(2)}SP [${eng.weaponLabel}${interceptStr}]`);
       spendDamageFuel(def);
     } else {
       state.log.unshift(`✗ ${att.name} → ${def.name} sem efeito [${eng.weaponLabel}${interceptStr}]`);
