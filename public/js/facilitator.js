@@ -12,6 +12,8 @@ let redConnected    = false;
 let facMsgReplyOpen = null;   // messageId da resposta em aberto no painel
 let facCapabilityFactors = null; // { A_SSN, B_SSK, C_Azuis, D_MSS, E_Terra } -> bool
 let facCapabilityDefs    = null; // { [key]: { label, cost, unitIds } }
+let facBatchRows    = null;   // resultados das simulações em lote (IA × IA)
+let facBatchSummary = null;
 
 // ─── Inicialização ────────────────────────────────────────────────────────────
 function facInit(roomId, ob, capabilityFactors, capabilityFactorDefs) {
@@ -202,6 +204,105 @@ function facStartGame() {
   const seedRaw   = seedInput ? seedInput.value.trim() : '';
   const seed      = seedRaw === '' ? null : Number(seedRaw);
   socket.emit('start_game', { seed });
+}
+
+// ─── SIMULAÇÕES EM LOTE (IA × IA) ─────────────────────────────────────────────
+
+function facRunBatchSimulations() {
+  if (!facOB) return;
+  socket.emit('update_ob', { ob: facOB });
+
+  const nInput     = document.getElementById('fac-batch-n');
+  const turnsInput = document.getElementById('fac-batch-turns');
+  const seedInput  = document.getElementById('fac-seed-input');
+  const replicas   = Math.max(1, Math.min(200, Math.round(Number(nInput?.value)) || 10));
+  const maxTurns   = Math.max(1, Math.min(60,  Math.round(Number(turnsInput?.value)) || 30));
+  const seedRaw    = seedInput ? seedInput.value.trim() : '';
+  const seed       = seedRaw === '' ? null : Number(seedRaw);
+
+  const btn = document.getElementById('fac-batch-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⌛ Gerando simulações...'; }
+  document.getElementById('fac-batch-results')?.classList.add('hidden');
+
+  socket.emit('run_batch_simulations', { replicas, maxTurns, seed });
+}
+
+function facHandleBatchResults(data) {
+  facBatchRows    = data.rows || [];
+  facBatchSummary = data.summary || null;
+
+  const btn = document.getElementById('fac-batch-btn');
+  if (btn) { btn.disabled = false; btn.textContent = '▶ GERAR SIMULAÇÕES'; }
+
+  const box = document.getElementById('fac-batch-results');
+  if (box && facBatchSummary) {
+    facRenderBatchSummary(box, facBatchSummary);
+    box.insertAdjacentHTML('beforeend',
+      '<span class="fac-batch-link" onclick="facOpenBatchModal()">Ver detalhes por réplica / exportar CSV</span>');
+    box.classList.remove('hidden');
+  }
+  showFacNotice(`${facBatchRows.length} simulação(ões) concluída(s).`);
+}
+
+function facRenderBatchSummary(container, summary) {
+  const fmt = (v, d = 2) => (v == null ? '—' : Number(v).toFixed(d));
+  container.innerHTML = `
+    <span class="fac-batch-stat">Simulações: <strong>${summary.n}</strong></span>
+    <span class="fac-batch-stat">Vitórias Azul: <strong>${summary.winsBlue}</strong></span>
+    <span class="fac-batch-stat">Vitórias Vermelha: <strong>${summary.winsRed}</strong></span>
+    <span class="fac-batch-stat">Sem decisão: <strong>${summary.winsNone}</strong></span>
+    <span class="fac-batch-stat">E1 Atrito Vermelho (méd.): <strong>${fmt(summary.avgE1_atrito)}</strong></span>
+    <span class="fac-batch-stat">E1 KCV (decisivo): <strong>${fmt(summary.pctKcv * 100, 0)}%</strong></span>
+    <span class="fac-batch-stat">E2 VP (méd.): <strong>${fmt(summary.avgE2_vp)}</strong></span>
+    <span class="fac-batch-stat">E2 SLOC (méd.): <strong>${fmt(summary.avgE2_sloc, 3)}</strong></span>
+    <span class="fac-batch-stat">E3 Culminância (turno méd.): <strong>${fmt(summary.avgCulminancia, 1)}</strong></span>
+    <span class="fac-batch-stat">Atrito Azul (méd.): <strong>${fmt(summary.avgAtritoAzul)}</strong></span>
+    <span class="fac-batch-stat">Turnos (méd.): <strong>${fmt(summary.avgTurns, 1)}</strong></span>
+  `;
+}
+
+function facOpenBatchModal() {
+  if (!facBatchRows) return;
+  const modal     = document.getElementById('fac-batch-modal');
+  const tbody     = document.getElementById('fac-batch-tbody');
+  const summaryEl = document.getElementById('fac-batch-summary');
+  if (summaryEl && facBatchSummary) facRenderBatchSummary(summaryEl, facBatchSummary);
+  if (tbody) {
+    tbody.innerHTML = facBatchRows.map(r => `<tr>
+      <td>${r.replica}</td>
+      <td>${r.seed ?? '—'}</td>
+      <td>${r.winner === 'blue' ? 'Azul' : r.winner === 'red' ? 'Vermelha' : '—'}</td>
+      <td>${r.turns}</td>
+      <td>${r.metrics.E1_atrito}</td>
+      <td>${r.metrics.E1_kcv}</td>
+      <td>${r.metrics.E2_vp}</td>
+      <td>${r.metrics.E2_sloc != null ? r.metrics.E2_sloc.toFixed(3) : '—'}</td>
+      <td>${r.metrics.E3_culminancia ?? '—'}</td>
+      <td>${r.metrics.atrito_azul}</td>
+    </tr>`).join('');
+  }
+  modal.classList.remove('hidden');
+}
+
+function facCloseBatchModal() {
+  document.getElementById('fac-batch-modal').classList.add('hidden');
+}
+
+function facExportBatchCsv() {
+  if (!facBatchRows) return;
+  const columns = [
+    { key: 'replica', label: 'Replica' },
+    { key: 'seed', label: 'Semente' },
+    { key: 'winner', label: 'vencedor' },
+    { key: 'turns', label: 'turnos' },
+    { key: 'metrics.E1_atrito', label: 'E1_atrito' },
+    { key: 'metrics.E1_kcv', label: 'E1_kcv' },
+    { key: 'metrics.E2_vp', label: 'E2_vp' },
+    { key: 'metrics.E2_sloc', label: 'E2_sloc' },
+    { key: 'metrics.E3_culminancia', label: 'E3_culminancia' },
+    { key: 'metrics.atrito_azul', label: 'atrito_azul' },
+  ];
+  exportRowsCsv(facBatchRows, columns, `wargame-simulacoes-${facRoomId}-${Date.now()}.csv`);
 }
 
 function facExportOBCsv() {
