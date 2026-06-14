@@ -24,6 +24,7 @@ function facInit(roomId, ob, capabilityFactors, capabilityFactorDefs) {
   if (big) big.textContent = roomId;
   facRenderConfig();
   facRenderPbcPanel();
+  facUpdatePlayerStatus({ blueReady: false, redReady: false });
 }
 
 // ─── Fatores de capacidade (PBC) ──────────────────────────────────────────────
@@ -451,26 +452,29 @@ function facUpdatePlayerStatus(data) {
   const blueRow = document.getElementById('fac-status-blue-row');
   const redRow  = document.getElementById('fac-status-red-row');
   if (blueRow) {
-    blueRow.textContent = blueConnected ? '⬤ Equipe Azul       conectada' : '⬤ Equipe Azul       aguardando';
+    blueRow.textContent = blueConnected ? '⬤ Equipe Azul       conectada' : '⬤ Equipe Azul       sem jogador (IA)';
     blueRow.className   = `fac-player-row ${blueConnected ? 'fac-blue' : 'fac-dim'}`;
   }
   if (redRow) {
-    redRow.textContent = redConnected ? '⬤ Equipe Vermelha   conectada' : '⬤ Equipe Vermelha   aguardando';
+    redRow.textContent = redConnected ? '⬤ Equipe Vermelha   conectada' : '⬤ Equipe Vermelha   sem jogador (IA)';
     redRow.className   = `fac-player-row ${redConnected ? 'fac-red' : 'fac-dim'}`;
   }
 
-  // Start button + notice
+  // Start button + notice (sempre habilitado: equipes sem jogador conectado
+  // são assumidas pelo jogador digital / IA)
   const btn    = document.getElementById('fac-start-btn');
   const notice = document.getElementById('fac-config-notice');
-  const ready  = blueConnected && redConnected;
-  if (btn) btn.disabled = !ready;
+  if (btn) btn.disabled = false;
   if (notice) {
-    if (ready) {
+    if (blueConnected && redConnected) {
       notice.textContent  = '✔ Ambas as equipes estão prontas.';
       notice.style.color  = 'var(--green)';
+    } else if (!blueConnected && !redConnected) {
+      notice.textContent  = 'Nenhum jogador conectado — ambas as equipes serão controladas pela IA (jogador digital).';
+      notice.style.color  = '';
     } else {
-      const missing = [!blueConnected && 'Azul', !redConnected && 'Vermelho'].filter(Boolean).join(' e ');
-      notice.textContent  = `Aguardando: ${missing}...`;
+      const missing = !blueConnected ? 'Azul' : 'Vermelha';
+      notice.textContent  = `Equipe ${missing} sem jogador — será controlada pela IA (jogador digital).`;
       notice.style.color  = '';
     }
   }

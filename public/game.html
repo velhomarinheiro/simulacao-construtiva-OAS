@@ -115,13 +115,14 @@
 
       <div class="config-section-title" style="margin-top:12px">JOGADORES</div>
       <div id="fac-players-counter" class="fac-players-counter">
-        <div id="fac-status-blue-row"  class="fac-player-row fac-dim">⬤ Equipe Azul &nbsp;&nbsp; aguardando</div>
-        <div id="fac-status-red-row"   class="fac-player-row fac-dim">⬤ Equipe Vermelha &nbsp; aguardando</div>
+        <div id="fac-status-blue-row"  class="fac-player-row fac-dim">⬤ Equipe Azul &nbsp;&nbsp; sem jogador (IA)</div>
+        <div id="fac-status-red-row"   class="fac-player-row fac-dim">⬤ Equipe Vermelha &nbsp; sem jogador (IA)</div>
       </div>
+      <p class="fac-hint">Equipes sem jogador humano conectado são controladas automaticamente pelo jogador digital (IA).</p>
 
       <div class="config-section-title" style="margin-top:12px">INICIAR</div>
-      <button id="fac-start-btn" class="act-btn gold" disabled onclick="facStartGame()">▶ INICIAR PARTIDA</button>
-      <div id="fac-config-notice" class="fac-notice" style="margin-top:8px">Aguardando os dois jogadores...</div>
+      <button id="fac-start-btn" class="act-btn gold" onclick="facStartGame()">▶ INICIAR PARTIDA</button>
+      <div id="fac-config-notice" class="fac-notice" style="margin-top:8px">Nenhum jogador conectado — ambas as equipes serão controladas pela IA (jogador digital).</div>
     </div>
 
   </div>

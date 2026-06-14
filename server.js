@@ -12,6 +12,7 @@ const {
 const {
   applyCapabilityConfig, CAPABILITY_FACTORS, FACTOR_KEYS, totalCost, countActive,
 } = require('./shared/capability_factors');
+const { decideMovement, decideAttacks } = require('./shared/bot/decision_engine');
 
 const PORT   = process.env.PORT || 3000;
 const { GRID_W, GRID_H } = require('./shared/hexgrid');
@@ -67,6 +68,64 @@ function runCombatQueue(room){
   endCombatPhase(room);
 }
 
+// ─── Jogador digital (IA) — assume equipes sem jogador humano conectado ───────
+function commitMovesForTeam(room,team,moves){
+  const{state}=room;
+  const validation=validateMoves(state,team,moves);
+  applyMoves(state,team,validation.ok?moves:[]);
+
+  if(state.blueDone&&state.redDone){
+    const{navalEmpty,airLost}=finalizeMovementPhase(state);
+    for(const u of navalEmpty){
+      const pid=room.players[u.team];
+      if(pid) io.to(pid).emit('fuel_alert',{unitId:u.id,name:u.name,type:'naval_empty'});
+    }
+    for(const u of airLost){
+      const pid=room.players[u.team];
+      if(pid) io.to(pid).emit('fuel_alert',{unitId:u.id,name:u.name,type:'air_lost'});
+    }
+    if(room.players.facilitator) io.to(room.players.facilitator).emit('movement_approval_needed',stateFor(state,'facilitator'));
+  }else{
+    const waiting=team==='blue'?'Força Vermelha':'Força Azul';
+    state.log.unshift(`${team==='blue'?'Força Azul':'Força Vermelha'} encerrou movimentação. Aguardando ${waiting}...`);
+  }
+  if(state.log.length>50) state.log=state.log.slice(0,50);
+  broadcast(room);
+}
+
+function declareAttacksForTeam(room,team,attacks){
+  const{state}=room;
+  if(team==='blue') state.blueAttacks=attacks||[];else state.redAttacks=attacks||[];
+  state.log.unshift(`${team==='blue'?'Força Azul':'Força Vermelha'} confirmou ${(attacks||[]).length} ataque(s).`);
+  if(state.blueAttacks!==null&&state.redAttacks!==null){
+    state.log.unshift('── Resolução de Combate ──');
+    state.combatQueue=buildCombatQueue(state);
+    broadcast(room);
+    if(state.combatQueue.length===0) endCombatPhase(room);
+    else runCombatQueue(room);
+  }else{broadcast(room);}
+}
+
+// Executa as ações do(s) jogador(es) digitais para a fase atual, se houver
+// equipe(s) sem jogador humano conectado (room.bots).
+function runBotsForPhase(room){
+  const{state}=room;
+  if(!state) return;
+  if(state.phase==='movement'){
+    for(const team of ['blue','red']){
+      if(!room.bots[team]) continue;
+      if(state[team==='blue'?'blueDone':'redDone']) continue;
+      commitMovesForTeam(room,team,decideMovement(stateFor(state,team),team));
+    }
+  }else if(state.phase==='combat'){
+    for(const team of ['blue','red']){
+      if(!room.bots[team]) continue;
+      if(state[team==='blue'?'blueAttacks':'redAttacks']!==null) continue;
+      declareAttacksForTeam(room,team,decideAttacks(stateFor(state,team),team));
+    }
+  }
+}
+
 // ─── Socket connections ───────────────────────────────────────────────────────
 io.on('connection',socket=>{
   console.log('+ connect',socket.id);
@@ -84,6 +143,7 @@ io.on('connection',socket=>{
       customOB:JSON.parse(JSON.stringify(baseOB)),
       capabilityFactors,
       seed:undefined,
+      bots:{blue:false,red:false},
     };
     rooms.set(id,room);
     socket.data.roomId=id; socket.data.role='facilitator';
@@ -102,6 +162,7 @@ io.on('connection',socket=>{
     if(room.players[team]){socket.emit('join_error',`Equipe ${team==='blue'?'Azul':'Vermelha'} já ocupada.`);return;}
 
     room.players[team]=socket.id;
+    if(room.bots) room.bots[team]=false; // jogador humano assume a equipe controlada pela IA
     socket.data.roomId=room.id; socket.data.role=team;
     socket.join(room.id);
     socket.emit('join_success',{role:team,roomId:room.id});
@@ -145,15 +206,14 @@ io.on('connection',socket=>{
   socket.on('start_game',({seed}={})=>{
     const room=rooms.get(socket.data.roomId);
     if(!room||socket.data.role!=='facilitator') return;
-    if(!room.players.blue||!room.players.red){
-      socket.emit('action_error','Aguardando os dois jogadores conectarem.');return;
-    }
+    room.bots={blue:!room.players.blue,red:!room.players.red};
     const parsedSeed=Number(seed);
     room.seed=(seed===null||seed===undefined||seed===''||Number.isNaN(parsedSeed))?undefined:parsedSeed;
     room.state=newGame(room.customOB,{seed:room.seed});
-    io.to(room.players.blue).emit('game_start',{role:'blue',state:stateFor(room.state,'blue')});
-    io.to(room.players.red ).emit('game_start',{role:'red', state:stateFor(room.state,'red')});
+    if(room.players.blue) io.to(room.players.blue).emit('game_start',{role:'blue',state:stateFor(room.state,'blue')});
+    if(room.players.red ) io.to(room.players.red ).emit('game_start',{role:'red', state:stateFor(room.state,'red')});
     socket.emit('game_start',{role:'facilitator',state:stateFor(room.state,'facilitator')});
+    runBotsForPhase(room);
   });
 
   // ── Movimentação ─────────────────────────────────────────────────────────
@@ -170,25 +230,7 @@ io.on('connection',socket=>{
     const validation=validateMoves(state,team,moves);
     if(!validation.ok){socket.emit('action_error',validation.error);return;}
 
-    applyMoves(state,team,moves);
-
-    if(state.blueDone&&state.redDone){
-      const{navalEmpty,airLost}=finalizeMovementPhase(state);
-      for(const u of navalEmpty){
-        const pid=room.players[u.team];
-        if(pid) io.to(pid).emit('fuel_alert',{unitId:u.id,name:u.name,type:'naval_empty'});
-      }
-      for(const u of airLost){
-        const pid=room.players[u.team];
-        if(pid) io.to(pid).emit('fuel_alert',{unitId:u.id,name:u.name,type:'air_lost'});
-      }
-      if(room.players.facilitator) io.to(room.players.facilitator).emit('movement_approval_needed',stateFor(state,'facilitator'));
-    }else{
-      const waiting=team==='blue'?'Força Vermelha':'Força Azul';
-      state.log.unshift(`${team==='blue'?'Força Azul':'Força Vermelha'} encerrou movimentação. Aguardando ${waiting}...`);
-    }
-    if(state.log.length>50) state.log=state.log.slice(0,50);
-    broadcast(room);
+    commitMovesForTeam(room,team,moves);
   });
 
   // ── Facilitador aprova movimentos (com opção de reposicionamento) ─────────
@@ -200,6 +242,7 @@ io.on('connection',socket=>{
 
     applyMovementApproval(state,overrides);
     broadcast(room);
+    runBotsForPhase(room);
   });
 
   // ── Combate: declaração de ataques ───────────────────────────────────────
@@ -210,15 +253,7 @@ io.on('connection',socket=>{
     const team=role;
     if(!['blue','red'].includes(team)) return;
     if(state.phase!=='combat'){socket.emit('action_error','Não é a fase de combate.');return;}
-    if(team==='blue') state.blueAttacks=attacks||[];else state.redAttacks=attacks||[];
-    state.log.unshift(`${team==='blue'?'Força Azul':'Força Vermelha'} confirmou ${(attacks||[]).length} ataque(s).`);
-    if(state.blueAttacks!==null&&state.redAttacks!==null){
-      state.log.unshift('── Resolução de Combate ──');
-      state.combatQueue=buildCombatQueue(state);
-      broadcast(room);
-      if(state.combatQueue.length===0) endCombatPhase(room);
-      else runCombatQueue(room);
-    }else{broadcast(room);}
+    declareAttacksForTeam(room,team,attacks);
   });
 
   // ── Facilitador aprova resultados de combate ──────────────────────────────
@@ -234,6 +269,7 @@ io.on('connection',socket=>{
       return;
     }
     broadcast(room);
+    runBotsForPhase(room);
   });
 
   // ── Mensagens do Facilitador ──────────────────────────────────────────────
@@ -311,7 +347,7 @@ io.on('connection',socket=>{
   socket.on('facilitator_reposition',({unitId,col,row})=>{
     const room=rooms.get(socket.data.roomId);
     if(!room?.state||socket.data.role!=='facilitator') return;
-    if(col<0||col>=GRID_W||row<0||row>=GRID_H) return;
+    if(col<0||col>=GRID_W||row>=GRID_H) return;
     const unit=room.state.units.find(u=>u.id===unitId&&u.hp>0);
     if(!unit) return;
     unit.col=col;unit.row=row;
@@ -323,10 +359,12 @@ io.on('connection',socket=>{
   socket.on('restart',()=>{
     const room=rooms.get(socket.data.roomId);
     if(!room||socket.data.role!=='facilitator') return;
+    room.bots={blue:!room.players.blue,red:!room.players.red};
     room.state=newGame(room.customOB,{seed:room.seed});
     if(room.players.blue) io.to(room.players.blue).emit('game_start',{role:'blue',state:stateFor(room.state,'blue')});
     if(room.players.red)  io.to(room.players.red ).emit('game_start',{role:'red', state:stateFor(room.state,'red')});
     socket.emit('game_start',{role:'facilitator',state:stateFor(room.state,'facilitator')});
+    runBotsForPhase(room);
   });
 
   // ── Disconnect ────────────────────────────────────────────────────────────
