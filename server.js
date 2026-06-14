@@ -9,6 +9,9 @@ const {
   validateMoves, applyMoves, finalizeMovementPhase, applyMovementApproval,
   buildCombatQueue, resolveCombatQueue, finishCombatPhase, applyCombatApproval,
 } = require('./shared/game_engine');
+const {
+  applyCapabilityConfig, CAPABILITY_FACTORS, FACTOR_KEYS, totalCost, countActive,
+} = require('./shared/capability_factors');
 
 const PORT   = process.env.PORT || 3000;
 const { GRID_W, GRID_H } = require('./shared/hexgrid');
@@ -71,16 +74,24 @@ io.on('connection',socket=>{
   // ── Facilitador cria a sala ──────────────────────────────────────────────
   socket.on('create_room',()=>{
     const id=genId();
+    const baseOB=JSON.parse(JSON.stringify(ORDER_OF_BATTLE));
+    const capabilityFactors=Object.fromEntries(FACTOR_KEYS.map(k=>[k,true]));
     const room={
       id,
       players:{blue:null,red:null,facilitator:socket.id},
       state:null,
-      customOB:JSON.parse(JSON.stringify(ORDER_OF_BATTLE)),
+      baseOB,
+      customOB:JSON.parse(JSON.stringify(baseOB)),
+      capabilityFactors,
+      seed:undefined,
     };
     rooms.set(id,room);
     socket.data.roomId=id; socket.data.role='facilitator';
     socket.join(id);
-    socket.emit('room_created',{roomId:id,role:'facilitator',ob:room.customOB});
+    socket.emit('room_created',{
+      roomId:id,role:'facilitator',ob:room.customOB,
+      capabilityFactors,capabilityFactorDefs:CAPABILITY_FACTORS,
+    });
   });
 
   // ── Jogadores entram com escolha de equipe ───────────────────────────────
@@ -117,14 +128,29 @@ io.on('connection',socket=>{
     socket.emit('ob_updated',{ok:true});
   });
 
+  // ── Config: facilitador ajusta os fatores de capacidade (PBC) ────────────
+  socket.on('set_capability_factors',({factors})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room||socket.data.role!=='facilitator') return;
+    room.capabilityFactors={...room.capabilityFactors,...(factors||{})};
+    room.customOB=applyCapabilityConfig(room.baseOB,room.capabilityFactors);
+    socket.emit('ob_updated',{
+      ok:true,ob:room.customOB,
+      custoTotal:totalCost(room.capabilityFactors),
+      nCapacidades:countActive(room.capabilityFactors),
+    });
+  });
+
   // ── Config: facilitador inicia o jogo ────────────────────────────────────
-  socket.on('start_game',()=>{
+  socket.on('start_game',({seed}={})=>{
     const room=rooms.get(socket.data.roomId);
     if(!room||socket.data.role!=='facilitator') return;
     if(!room.players.blue||!room.players.red){
       socket.emit('action_error','Aguardando os dois jogadores conectarem.');return;
     }
-    room.state=newGame(room.customOB);
+    const parsedSeed=Number(seed);
+    room.seed=(seed===null||seed===undefined||seed===''||Number.isNaN(parsedSeed))?undefined:parsedSeed;
+    room.state=newGame(room.customOB,{seed:room.seed});
     io.to(room.players.blue).emit('game_start',{role:'blue',state:stateFor(room.state,'blue')});
     io.to(room.players.red ).emit('game_start',{role:'red', state:stateFor(room.state,'red')});
     socket.emit('game_start',{role:'facilitator',state:stateFor(room.state,'facilitator')});
@@ -297,7 +323,7 @@ io.on('connection',socket=>{
   socket.on('restart',()=>{
     const room=rooms.get(socket.data.roomId);
     if(!room||socket.data.role!=='facilitator') return;
-    room.state=newGame(room.customOB);
+    room.state=newGame(room.customOB,{seed:room.seed});
     if(room.players.blue) io.to(room.players.blue).emit('game_start',{role:'blue',state:stateFor(room.state,'blue')});
     if(room.players.red)  io.to(room.players.red ).emit('game_start',{role:'red', state:stateFor(room.state,'red')});
     socket.emit('game_start',{role:'facilitator',state:stateFor(room.state,'facilitator')});
