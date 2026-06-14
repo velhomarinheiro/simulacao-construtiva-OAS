@@ -1,6 +1,6 @@
 'use strict';
 
-// ─── Export game screenshot ───────────────────────────────────────────────────
+// ─── Export game screenshot ─────────────────────────────────────────────────────
 function exportImage(canvasEl, filename) {
   const name = filename || `wargame-turno-${Date.now()}.png`;
   const url  = canvasEl.toDataURL('image/png');
@@ -12,7 +12,7 @@ function exportImage(canvasEl, filename) {
   document.body.removeChild(a);
 }
 
-// ─── Export game log as text ──────────────────────────────────────────────────
+// ─── Export game log as text ────────────────────────────────────────────────────
 function exportLog(state, filename) {
   if (!state) return;
   const lines = [];
@@ -64,7 +64,7 @@ function exportLog(state, filename) {
   URL.revokeObjectURL(url);
 }
 
-// ─── Export Order of Battle as CSV ───────────────────────────────────────────
+// ─── Export Order of Battle as CSV ──────────────────────────────────────────────────
 function exportOBCsv(units, filename) {
   const headers = [
     'team','id','name','category','subtype','stayingPower','movement',
@@ -115,7 +115,30 @@ function exportOBCsv(units, filename) {
   URL.revokeObjectURL(url);
 }
 
-// ─── Import Order of Battle from CSV ─────────────────────────────────────────
+// ─── Export generic tabular data as CSV ────────────────────────────────────────
+// columns: [{ key, label }] — `key` reads (possibly nested via dot-path) from
+// each row, `label` is the CSV header.
+function exportRowsCsv(rows, columns, filename) {
+  const get = (row, key) => key.split('.').reduce((v, k) => (v == null ? v : v[k]), row);
+  const headers = columns.map(c => c.label);
+  const lines = rows.map(row => columns.map(c => {
+    const v = get(row, c.key);
+    return `"${String(v ?? '').replace(/"/g, '""')}"`;
+  }).join(','));
+
+  const csv  = [headers.join(','), ...lines].join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = filename || `wargame-export-${Date.now()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ─── Import Order of Battle from CSV ──────────────────────────────────────────────
 function importOBCsv(text) {
   const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim());
   if (lines.length < 2) throw new Error('CSV vazio ou sem dados.');
@@ -193,7 +216,7 @@ function importOBCsv(text) {
   return { forces };
 }
 
-// ─── Trigger file input for CSV import ───────────────────────────────────────
+// ─── Trigger file input for CSV import ─────────────────────────────────────────────────
 function triggerImportOB(onSuccess, onError) {
   const inp = document.createElement('input');
   inp.type  = 'file';

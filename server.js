@@ -13,11 +13,12 @@ const {
   applyCapabilityConfig, CAPABILITY_FACTORS, FACTOR_KEYS, totalCost, countActive,
 } = require('./shared/capability_factors');
 const { decideMovement, decideAttacks } = require('./shared/bot/decision_engine');
+const { createCulminationTracker, computeFinalMetrics } = require('./shared/metrics');
 
 const PORT   = process.env.PORT || 3000;
 const { GRID_W, GRID_H } = require('./shared/hexgrid');
 
-// ─── Server ───────────────────────────────────────────────────────────────────
+// ─── Server ──────────────────────────────────────────────────────────
 const app=express();
 const server=http.createServer(app);
 const io=new Server(server,{cors:{origin:'*'}});
@@ -68,7 +69,7 @@ function runCombatQueue(room){
   endCombatPhase(room);
 }
 
-// ─── Jogador digital (IA) — assume equipes sem jogador humano conectado ───────
+// ─── Jogador digital (IA) — assume equipes sem jogador humano conectado ───
 function commitMovesForTeam(room,team,moves){
   const{state}=room;
   const validation=validateMoves(state,team,moves);
@@ -126,11 +127,76 @@ function runBotsForPhase(room){
   }
 }
 
-// ─── Socket connections ───────────────────────────────────────────────────────
+// ─── Simulações em lote (IA × IA), conforme tools/batch_runner.js ─────────
+// Joga uma partida completa headless (movimento+combate, ambos os lados via IA,
+// sem intervenção do facilitador) com a OB já ajustada pelos fatores PBC.
+function runBatchGame(customOB,seed,maxTurns){
+  const state=newGame(customOB,{seed});
+  const culmination=createCulminationTracker();
+  culmination.update(state);
+
+  const maxPhases=maxTurns*2; // dia + noite por turno
+  let winner=null;
+  for(let phase=0;phase<maxPhases&&!winner;phase++){
+    const blueMoves=decideMovement(stateFor(state,'blue'),'blue');
+    const redMoves=decideMovement(stateFor(state,'red'),'red');
+    applyMoves(state,'blue',blueMoves);
+    applyMoves(state,'red',redMoves);
+    finalizeMovementPhase(state);
+    applyMovementApproval(state,[]);
+
+    state.blueAttacks=decideAttacks(stateFor(state,'blue'),'blue');
+    state.redAttacks=decideAttacks(stateFor(state,'red'),'red');
+    state.combatQueue=buildCombatQueue(state);
+    resolveCombatQueue(state);
+
+    let result=finishCombatPhase(state);
+    winner=result.winner;
+    if(!winner){
+      result=applyCombatApproval(state,[]);
+      winner=result.winner;
+    }
+    culmination.update(state);
+  }
+
+  const metrics=computeFinalMetrics(state,culmination.turn);
+  return{winner,metrics,turns:state.turn};
+}
+
+// Agrega os resultados de várias réplicas em estatísticas-resumo.
+function summarizeBatch(rows){
+  const n=rows.length;
+  let winsBlue=0,winsRed=0,winsNone=0;
+  let sE1=0,sVp=0,sSloc=0,nSloc=0,sAtritoAzul=0,sKcv=0,sTurns=0,sCulm=0,nCulm=0;
+  for(const r of rows){
+    if(r.winner==='blue') winsBlue++;
+    else if(r.winner==='red') winsRed++;
+    else winsNone++;
+    sE1+=r.metrics.E1_atrito||0;
+    sVp+=r.metrics.E2_vp||0;
+    if(r.metrics.E2_sloc!=null){sSloc+=r.metrics.E2_sloc;nSloc++;}
+    sAtritoAzul+=r.metrics.atrito_azul||0;
+    sKcv+=r.metrics.E1_kcv||0;
+    sTurns+=r.turns||0;
+    if(r.metrics.E3_culminancia!=null){sCulm+=r.metrics.E3_culminancia;nCulm++;}
+  }
+  return{
+    n,winsBlue,winsRed,winsNone,
+    avgE1_atrito:n?sE1/n:0,
+    avgE2_vp:n?sVp/n:0,
+    avgE2_sloc:nSloc?sSloc/nSloc:null,
+    avgAtritoAzul:n?sAtritoAzul/n:0,
+    pctKcv:n?sKcv/n:0,
+    avgCulminancia:nCulm?sCulm/nCulm:null,
+    avgTurns:n?sTurns/n:0,
+  };
+}
+
+// ─── Socket connections ──────────────────────────────────────────
 io.on('connection',socket=>{
   console.log('+ connect',socket.id);
 
-  // ── Facilitador cria a sala ──────────────────────────────────────────────
+  // ── Facilitador cria a sala ──────────────────────────────────
   socket.on('create_room',()=>{
     const id=genId();
     const baseOB=JSON.parse(JSON.stringify(ORDER_OF_BATTLE));
@@ -154,7 +220,7 @@ io.on('connection',socket=>{
     });
   });
 
-  // ── Jogadores entram com escolha de equipe ───────────────────────────────
+  // ── Jogadores entram com escolha de equipe ────────────────────────
   socket.on('join_room',({roomId,team})=>{
     const room=rooms.get(roomId?.toUpperCase?.());
     if(!room){socket.emit('join_error','Sala não encontrada.');return;}
@@ -175,13 +241,13 @@ io.on('connection',socket=>{
         redReady:!!room.players.red,
       });
     }
-    // Se o jogo já começou, envia estado atual ao novo jogador
+    // Se o jogo já comecou, envia estado atual ao novo jogador
     if(room.state){
       socket.emit('game_start',{role:team,state:stateFor(room.state,team)});
     }
   });
 
-  // ── Config: facilitador atualiza a OB ────────────────────────────────────
+  // ── Config: facilitador atualiza a OB ──────────────────────────
   socket.on('update_ob',({ob})=>{
     const room=rooms.get(socket.data.roomId);
     if(!room||socket.data.role!=='facilitator') return;
@@ -202,7 +268,32 @@ io.on('connection',socket=>{
     });
   });
 
-  // ── Config: facilitador inicia o jogo ────────────────────────────────────
+  // ── Config: facilitador gera simulações em lote (IA × IA) ────────────
+  socket.on('run_batch_simulations',({replicas,maxTurns,seed}={})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room||socket.data.role!=='facilitator') return;
+
+    const nReplicas=Math.max(1,Math.min(200,Math.round(Number(replicas))||10));
+    const nMaxTurns=Math.max(1,Math.min(60,Math.round(Number(maxTurns))||30));
+    const parsedSeed=Number(seed);
+    const hasSeed=!(seed===null||seed===undefined||seed===''||Number.isNaN(parsedSeed));
+
+    const rows=[];
+    for(let i=0;i<nReplicas;i++){
+      const runSeed=hasSeed?parsedSeed+i:undefined;
+      const{winner,metrics,turns}=runBatchGame(room.customOB,runSeed,nMaxTurns);
+      rows.push({replica:i+1,seed:runSeed??null,winner,turns,metrics});
+    }
+    const summary=summarizeBatch(rows);
+    socket.emit('batch_simulation_results',{
+      rows,summary,
+      capabilityFactors:room.capabilityFactors,
+      nCapacidades:countActive(room.capabilityFactors),
+      custoTotal:totalCost(room.capabilityFactors),
+    });
+  });
+
+  // ── Config: facilitador inicia o jogo ──────────────────────────
   socket.on('start_game',({seed}={})=>{
     const room=rooms.get(socket.data.roomId);
     if(!room||socket.data.role!=='facilitator') return;
@@ -216,7 +307,7 @@ io.on('connection',socket=>{
     runBotsForPhase(room);
   });
 
-  // ── Movimentação ─────────────────────────────────────────────────────────
+  // ── Movimentação ────────────────────────────────────────────
   socket.on('commit_moves',({moves})=>{
     const room=rooms.get(socket.data.roomId);
     if(!room?.state) return;
@@ -245,7 +336,7 @@ io.on('connection',socket=>{
     runBotsForPhase(room);
   });
 
-  // ── Combate: declaração de ataques ───────────────────────────────────────
+  // ── Combate: declaração de ataques ─────────────────────────────
   socket.on('declare_attacks',attacks=>{
     const room=rooms.get(socket.data.roomId);
     if(!room?.state) return;
@@ -256,7 +347,7 @@ io.on('connection',socket=>{
     declareAttacksForTeam(room,team,attacks);
   });
 
-  // ── Facilitador aprova resultados de combate ──────────────────────────────
+  // ── Facilitador aprova resultados de combate ─────────────────────
   socket.on('approve_combat',({hpChanges})=>{
     const room=rooms.get(socket.data.roomId);
     if(!room?.state||socket.data.role!=='facilitator') return;
@@ -272,7 +363,7 @@ io.on('connection',socket=>{
     runBotsForPhase(room);
   });
 
-  // ── Mensagens do Facilitador ──────────────────────────────────────────────
+  // ── Mensagens do Facilitador ──────────────────────────────────
   socket.on('facilitator_message',({to,text})=>{
     const room=rooms.get(socket.data.roomId);
     if(!room?.state||socket.data.role!=='facilitator') return;
@@ -310,7 +401,7 @@ io.on('connection',socket=>{
     facBroadcast(room);
   });
 
-  // ── Gerenciamento de unidades pelo facilitador ────────────────────────────
+  // ── Gerenciamento de unidades pelo facilitador ──────────────────────
   socket.on('facilitator_manage_unit',({action,unitId,data})=>{
     const room=rooms.get(socket.data.roomId);
     if(!room?.state||socket.data.role!=='facilitator') return;
@@ -343,7 +434,7 @@ io.on('connection',socket=>{
     }
   });
 
-  // ── Facilitador reposiciona unidade no mapa ───────────────────────────────
+  // ── Facilitador reposiciona unidade no mapa ───────────────────────
   socket.on('facilitator_reposition',({unitId,col,row})=>{
     const room=rooms.get(socket.data.roomId);
     if(!room?.state||socket.data.role!=='facilitator') return;
@@ -355,7 +446,7 @@ io.on('connection',socket=>{
     broadcast(room);
   });
 
-  // ── Restart ───────────────────────────────────────────────────────────────
+  // ── Restart ─────────────────────────────────────────────────────────────
   socket.on('restart',()=>{
     const room=rooms.get(socket.data.roomId);
     if(!room||socket.data.role!=='facilitator') return;
@@ -367,7 +458,7 @@ io.on('connection',socket=>{
     runBotsForPhase(room);
   });
 
-  // ── Disconnect ────────────────────────────────────────────────────────────
+  // ── Disconnect ───────────────────────────────────────────────────────
   socket.on('disconnect',()=>{
     const{roomId,role}=socket.data;if(!roomId) return;
     const room=rooms.get(roomId);if(!room) return;
