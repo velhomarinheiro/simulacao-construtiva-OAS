@@ -277,12 +277,16 @@ io.on('connection',socket=>{
     const nMaxTurns=Math.max(1,Math.min(60,Math.round(Number(maxTurns))||30));
     const parsedSeed=Number(seed);
     const hasSeed=!(seed===null||seed===undefined||seed===''||Number.isNaN(parsedSeed));
+    // Sem semente informada: gera uma base aleatória para que cada réplica
+    // produza uma trajetória diferente (núcleo estocástico). Com semente
+    // informada, as réplicas usam seed+i (reprodutível).
+    const baseSeed=hasSeed?parsedSeed:Math.floor(Math.random()*1e9);
 
     const rows=[];
     for(let i=0;i<nReplicas;i++){
-      const runSeed=hasSeed?parsedSeed+i:undefined;
+      const runSeed=baseSeed+i;
       const{winner,metrics,turns}=runBatchGame(room.customOB,runSeed,nMaxTurns);
-      rows.push({replica:i+1,seed:runSeed??null,winner,turns,metrics});
+      rows.push({replica:i+1,seed:runSeed,winner,turns,metrics});
     }
     const summary=summarizeBatch(rows);
     socket.emit('batch_simulation_results',{
