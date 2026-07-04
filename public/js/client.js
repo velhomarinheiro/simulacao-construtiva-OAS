@@ -90,9 +90,22 @@ socket.on('ob_updated', data => {
   if (myRole === 'facilitator' && typeof facHandleObUpdated === 'function') facHandleObUpdated(data);
 });
 
+// Facilitador: progresso das simulações em lote (chunks assíncronos)
+socket.on('batch_progress', ({ done, total }) => {
+  const btn = document.getElementById('fac-batch-btn');
+  if (btn) btn.textContent = `⌛ Gerando ${done}/${total}...`;
+});
+
 // Facilitador: resultados das simulações em lote (IA × IA)
 socket.on('batch_simulation_results', data => {
   if (myRole === 'facilitator' && typeof facHandleBatchResults === 'function') facHandleBatchResults(data);
+});
+
+// Facilitador: um jogador humano caiu e a IA assumiu a equipe (sem travar o jogo)
+socket.on('player_ai_takeover', ({ team }) => {
+  if (typeof showFacNotice === 'function') {
+    showFacNotice(`⚠ ${team === 'blue' ? 'Azul' : 'Vermelho'} desconectou — IA assumiu a equipe.`);
+  }
 });
 
 // Jogador: entrou com sucesso
@@ -382,6 +395,27 @@ canvas.addEventListener('click', e => {
   const h  = pixelToHex((e.clientX - r.left) * sx, (e.clientY - r.top) * sy);
   handleClick(h.col, h.row);
 });
+
+// Touch support: a tap resolves to the same hex/action as a click, and a touch
+// move updates the hover/terrain tip (mobile/tablet parity with the mouse).
+function hexFromTouch(t) {
+  const r  = canvas.getBoundingClientRect();
+  const sx = canvas.width  / r.width;
+  const sy = canvas.height / r.height;
+  return pixelToHex((t.clientX - r.left) * sx, (t.clientY - r.top) * sy);
+}
+canvas.addEventListener('touchstart', e => {
+  if (!gameState || !e.touches[0]) return;
+  const h = hexFromTouch(e.touches[0]);
+  hoverHex = { col: h.col, row: h.row };
+  render();
+}, { passive: true });
+canvas.addEventListener('touchend', e => {
+  if (!gameState || !e.changedTouches[0]) return;
+  e.preventDefault(); // suppress the synthetic click that would double-fire
+  const h = hexFromTouch(e.changedTouches[0]);
+  handleClick(h.col, h.row);
+}, { passive: false });
 
 // ─── Click logic ─────────────────────────────────────────────────────────────────────────
 function handleClick(col, row) {

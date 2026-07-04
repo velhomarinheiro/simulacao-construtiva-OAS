@@ -65,7 +65,9 @@ function stateFor(state, role) {
   }
   const team = role;
   const night = state.period === 'night';
-  const { combatQueue: _cq, ...stateRest } = state;
+  // Players never receive combatQueue or the full combatHistory (the latter
+  // names both sides' units — a fog-of-war leak); those are facilitator-only.
+  const { combatQueue: _cq, combatHistory: _ch, ...stateRest } = state;
 
   const neutralUnits = state.units.filter(u => u.team === 'neutral' && u.hp > 0);
   const enemyActual = state.units.filter(u => u.team !== team && u.team !== 'neutral' && u.hp > 0);
@@ -171,6 +173,7 @@ function newGame(customOB, options = {}) {
     winner: null,
     movementSnapshot: {},
     combatQueue: [],
+    combatHistory: [], // structured per-engagement record for the after-action report
     rng: options.seed != null ? mulberry32(options.seed) : null,
     reloadDoctrine: options.reloadDoctrine || 'baseline',
   };
@@ -453,6 +456,38 @@ function resolveCombatQueue(state) {
     }
   }
   if (state.log.length > 80) state.log = state.log.slice(0, 80);
+  recordCombatHistory(state);
+}
+
+// Appends one structured after-action record per successful engagement of the
+// phase just resolved. Unbounded on purpose — this is the durable combat log
+// the AAR export reads (the display `state.log` stays capped for the live UI).
+function recordCombatHistory(state) {
+  if (!Array.isArray(state.combatHistory)) state.combatHistory = [];
+  for (const eng of state.combatQueue) {
+    const r = eng.result;
+    if (!r || !r.ok) continue;
+    const att = state.units.find(u => u.id === eng.attackerId);
+    const def = state.units.find(u => u.id === eng.targetId);
+    state.combatHistory.push({
+      turn: state.turn,
+      period: state.period,
+      engagementId: eng.id,
+      attackerId: eng.attackerId,
+      attackerName: att?.name ?? eng.attackerId,
+      attackerTeam: att?.team ?? null,
+      targetId: eng.targetId,
+      targetName: def?.name ?? eng.targetId,
+      targetTeam: def?.team ?? null,
+      weapon: r.weaponLabel ?? eng.weaponType,
+      launched: r.launched ?? null,
+      pOffense: r.pOffense ?? null,
+      pDefense: r.pDefense ?? null,
+      actualLoss: Number((r.actualLoss ?? 0).toFixed(3)),
+      remainingHp: Number((r.remainingHp ?? def?.hp ?? 0).toFixed(3)),
+      destroyed: !!r.destroyed,
+    });
+  }
 }
 
 /** Ends the combat phase: checks for a winner, else moves to combat_approval. Returns {winner}. */

@@ -905,3 +905,17 @@ textarea.fac-input { resize: vertical; min-height: 36px; }
 .player-msg-actions { display: flex; flex-direction: column; gap: 8px; }
 .player-msg-btns { display: flex; gap: 10px; }
 .player-msg-btns .act-btn { flex: 1; }
+
+/* ─── Responsivo / toque (P2) ─────────────────────────────────────────────────
+   Aditivo: só se aplica em telas estreitas. Em desktop nada muda. */
+#game-canvas { touch-action: none; } /* o tap é tratado por touchend em client.js */
+
+@media (max-width: 860px) {
+  html, body { overflow: auto; }
+  #game-screen { height: auto; min-height: 100vh; overflow: visible; }
+  .game-body { flex-direction: column; overflow: visible; }
+  .sidebar { width: auto !important; max-width: none; }
+  .canvas-wrap { overflow: auto; }
+  #game-canvas { max-width: 100%; height: auto; }
+  .header-meta { flex-wrap: wrap; gap: 0.4rem; }
+}

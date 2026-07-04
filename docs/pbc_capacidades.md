@@ -329,10 +329,23 @@ poder de permanência, χ, targeting σ) só faria sentido numa resolução
 engajamentos 1-vs-1 declarados), o que seria um redesenho, não um ajuste. Um
 comentário nesse sentido foi adicionado a `shared/combat_engine.js`.
 
-### 8.6 ⚠️ Datasets committados estão desatualizados
+### 8.6 Regeneração dos datasets com o motor corrigido
 
-`output/coleta_fatorial.csv` e `output/coleta_ablacao.csv` foram gerados **antes**
-das correções §6 (combate simultâneo) e §8 (métricas). Devem ser **regenerados**
-antes de qualquer análise (`node tools/batch_runner.js --bloco fatorial` /
-`--bloco ablacao`), lembrando da advertência de CRN da §7 para a etapa
-estatística.
+`output/` é um diretório de artefatos **gitignored** — os CSVs não ficam no
+repositório; gere-os com o motor corrigido (pós-§6 combate simultâneo, pós-§8
+métricas):
+
+```bash
+node tools/batch_runner.js --bloco fatorial --out output/coleta_fatorial.csv
+node tools/batch_runner.js --bloco ablacao  --out output/coleta_ablacao.csv
+```
+
+Efeito das correções, verificado na regeneração (640 + 300 jogos, ~12 s): as
+partidas agora têm desfecho decidível — no fatorial, 34 vitórias Azuis, 250
+Vermelhas, 356 censuradas — e `E1_kcv` voltou a discriminar (34/640, coincidindo
+exatamente com as vitórias Azuis; na ablação varia de 3/50 a 12/50 conforme o
+conjunto de capacidades). Antes das correções, o predicado quebrado mantinha
+quase tudo "censurado" com `E1_kcv ≡ 0`.
+
+Para a etapa estatística, lembrar a advertência de CRN da §7 (usar métodos
+pareados/blocados por semente, ou gerar sementes disjuntas por condição).

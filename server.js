@@ -14,9 +14,14 @@ const {
 } = require('./shared/capability_factors');
 const { decideMovement, decideAttacks } = require('./shared/bot/decision_engine');
 const { createCulminationTracker, computeFinalMetrics } = require('./shared/metrics');
+const { validateOB } = require('./shared/ob_io');
 
 const PORT   = process.env.PORT || 3000;
 const { GRID_W, GRID_H } = require('./shared/hexgrid');
+
+// How long a room survives with no facilitator connected before it is reclaimed
+// (grace period for a facilitator reload/reconnect). Overridable for tests.
+const ROOM_GRACE_MS = Number(process.env.ROOM_GRACE_MS) || 15 * 60 * 1000;
 
 // ─── Server ──────────────────────────────────────────────────────────
 const app=express();
@@ -26,6 +31,8 @@ const io=new Server(server,{cors:{origin:'*'}});
 app.use(express.static(path.join(__dirname,'public')));
 app.get('/',(_, res)=>res.sendFile(path.join(__dirname,'public','index.html')));
 app.get('/game',(_, res)=>res.sendFile(path.join(__dirname,'public','game.html')));
+// Shared OB import/validation module, reused verbatim by the browser importer.
+app.get('/shared/ob_io.js',(_, res)=>res.sendFile(path.join(__dirname,'shared','ob_io.js')));
 
 const rooms=new Map();
 function genId(){return Math.random().toString(36).slice(2,8).toUpperCase();}
@@ -251,6 +258,8 @@ io.on('connection',socket=>{
   socket.on('update_ob',({ob})=>{
     const room=rooms.get(socket.data.roomId);
     if(!room||socket.data.role!=='facilitator') return;
+    const{ok,errors}=validateOB(ob);
+    if(!ok){socket.emit('ob_updated',{ok:false,errors});return;}
     room.customOB=ob;
     socket.emit('ob_updated',{ok:true});
   });
@@ -282,19 +291,36 @@ io.on('connection',socket=>{
     // informada, as réplicas usam seed+i (reprodutível).
     const baseSeed=hasSeed?parsedSeed:Math.floor(Math.random()*1e9);
 
+    // Run in chunks, yielding to the event loop between them (setImmediate) so a
+    // large batch does not block every other room/socket, and emit progress.
+    const customOB=room.customOB;
     const rows=[];
-    for(let i=0;i<nReplicas;i++){
-      const runSeed=baseSeed+i;
-      const{winner,metrics,turns}=runBatchGame(room.customOB,runSeed,nMaxTurns);
-      rows.push({replica:i+1,seed:runSeed,winner,turns,metrics});
-    }
-    const summary=summarizeBatch(rows);
-    socket.emit('batch_simulation_results',{
-      rows,summary,
-      capabilityFactors:room.capabilityFactors,
-      nCapacidades:countActive(room.capabilityFactors),
-      custoTotal:totalCost(room.capabilityFactors),
-    });
+    const CHUNK=5;
+    let i=0;
+    const runChunk=()=>{
+      // Bail if the facilitator left mid-run (room gone or role changed).
+      const cur=rooms.get(socket.data.roomId);
+      if(!cur||socket.data.role!=='facilitator') return;
+      const end=Math.min(i+CHUNK,nReplicas);
+      for(;i<end;i++){
+        const runSeed=baseSeed+i;
+        const{winner,metrics,turns}=runBatchGame(customOB,runSeed,nMaxTurns);
+        rows.push({replica:i+1,seed:runSeed,winner,turns,metrics});
+      }
+      if(i<nReplicas){
+        socket.emit('batch_progress',{done:i,total:nReplicas});
+        setImmediate(runChunk);
+        return;
+      }
+      const summary=summarizeBatch(rows);
+      socket.emit('batch_simulation_results',{
+        rows,summary,
+        capabilityFactors:cur.capabilityFactors,
+        nCapacidades:countActive(cur.capabilityFactors),
+        custoTotal:totalCost(cur.capabilityFactors),
+      });
+    };
+    runChunk();
   });
 
   // ── Config: facilitador inicia o jogo ──────────────────────────
@@ -462,19 +488,61 @@ io.on('connection',socket=>{
     runBotsForPhase(room);
   });
 
+  // ── Facilitador reassume uma sala após reload/reconexão ──────────────────
+  socket.on('rejoin_room',({roomId})=>{
+    const room=rooms.get(roomId?.toUpperCase?.());
+    if(!room){socket.emit('join_error','Sala não encontrada ou expirada.');return;}
+    if(room.players.facilitator){socket.emit('join_error','Facilitador já conectado nesta sala.');return;}
+    if(room.cleanupTimer){clearTimeout(room.cleanupTimer);room.cleanupTimer=null;}
+    room.players.facilitator=socket.id;
+    socket.data.roomId=room.id; socket.data.role='facilitator';
+    socket.join(room.id);
+    socket.emit('room_created',{
+      roomId:room.id,role:'facilitator',ob:room.customOB,
+      capabilityFactors:room.capabilityFactors,capabilityFactorDefs:CAPABILITY_FACTORS,
+      blueReady:!!room.players.blue,redReady:!!room.players.red,rejoined:true,
+    });
+    if(room.state) socket.emit('game_start',{role:'facilitator',state:stateFor(room.state,'facilitator')});
+    if(room.players.blue) io.to(room.players.blue).emit('player_joined',{team:'facilitator',blueReady:!!room.players.blue,redReady:!!room.players.red});
+    if(room.players.red)  io.to(room.players.red ).emit('player_joined',{team:'facilitator',blueReady:!!room.players.blue,redReady:!!room.players.red});
+  });
+
   // ── Disconnect ───────────────────────────────────────────────────────
   socket.on('disconnect',()=>{
     const{roomId,role}=socket.data;if(!roomId) return;
     const room=rooms.get(roomId);if(!room) return;
     console.log(`- disconnect ${role} from ${roomId}`);
     room.players[role]=null;
-    // Notify remaining players
     const notify=pid=>{if(pid) io.to(pid).emit('player_disconnected',{role});};
-    if(role==='facilitator'){notify(room.players.blue);notify(room.players.red);}
-    else{notify(room.players.facilitator);notify(room.players[role==='blue'?'red':'blue']);}
-    // Limpar sala se facilitador saiu
-    if(role==='facilitator') rooms.delete(roomId);
+
+    if(role==='facilitator'){
+      // Do NOT destroy the room — keep it alive for a grace period so the
+      // facilitator can reload/reconnect (rejoin_room). Only reclaim it if
+      // nobody has taken the seat by the time the timer fires.
+      notify(room.players.blue);notify(room.players.red);
+      if(room.cleanupTimer) clearTimeout(room.cleanupTimer);
+      room.cleanupTimer=setTimeout(()=>{
+        const r=rooms.get(roomId);
+        if(r&&!r.players.facilitator) rooms.delete(roomId);
+      },ROOM_GRACE_MS);
+      if(room.cleanupTimer.unref) room.cleanupTimer.unref();
+      return;
+    }
+
+    // A human player dropped: hand their team to the digital player (IA) so the
+    // game does not stall waiting for a commit that will never come, and, if it
+    // is currently that team's turn, run the bot for the pending phase.
+    notify(room.players.facilitator);notify(room.players[role==='blue'?'red':'blue']);
+    if(room.bots) room.bots[role]=true;
+    if(room.state&&!room.state.winner){
+      if(room.players.facilitator) io.to(room.players.facilitator).emit('player_ai_takeover',{team:role});
+      runBotsForPhase(room);
+    }
   });
 });
 
-server.listen(PORT,()=>console.log(`Servidor em http://localhost:${PORT}`));
+if(require.main===module){
+  server.listen(PORT,()=>console.log(`Servidor em http://localhost:${PORT}`));
+}
+
+module.exports={app,server,io,rooms,ROOM_GRACE_MS,runBatchGame};

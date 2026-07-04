@@ -119,8 +119,8 @@ quebrando as médias calibradas. Detalhe em `pbc_capacidades.md §8.5` e em
 comentário em `combat_engine.js`. O maquinário χ/staying-power só se aplicaria a
 uma resolução força-contra-força em pulso único (redesenho, não ajuste).
 
-> ⚠️ Os datasets `output/coleta_*.csv` foram gerados antes das correções P0/P1 e
-> devem ser **regenerados** antes de análise (`pbc_capacidades.md §8.6`).
+> Os datasets `output/coleta_*.csv` são artefatos gitignored; regenere-os com o
+> motor corrigido pelo `batch_runner` (`pbc_capacidades.md §8.6`).
 
 ---
 
@@ -168,6 +168,33 @@ uma resolução força-contra-força em pulso único (redesenho, não ajuste).
 - Regras ensinadas apenas pela lista estática da landing page; sem tutorial ou
   tooltips em jogo.
 
+### B.5 Correções de plataforma — [APLICADAS P2]
+
+- **Resiliência** (`server.js`): queda de jogador humano agora passa a equipe à
+  IA (`room.bots[team]=true` + `runBotsForPhase`, emite `player_ai_takeover`) —
+  fim do travamento; queda do facilitador **não** deleta a sala (grace period
+  `ROOM_GRACE_MS` com limpeza agendada, cancelada no rejoin); novo evento
+  `rejoin_room` reassume a sala. Cobertura em `server_resilience.test.js`.
+- **Validação de OB** (`shared/ob_io.js#validateOB`): `update_ob` rejeita OB
+  malformada (categoria inválida, id duplicado, SP≤0, posição fora do tabuleiro),
+  reportando todos os erros ao facilitador.
+- **Lote assíncrono** (`server.js`): `run_batch_simulations` roda em chunks via
+  `setImmediate` com eventos `batch_progress`, sem bloquear o event loop.
+- **Importação robusta** (`shared/ob_io.js#parseCSV/obFromCsv`): parser em
+  máquina de estados sobre o texto todo (campos com aspas e quebras de linha) e
+  distinção de `0` vs vazio. Módulo compartilhado navegador+servidor.
+- **AAR estruturado**: `state.combatHistory` registra cada engajamento
+  (turno, atacante, alvo, arma, dano, destruição); exportável em CSV
+  (`exportAarCsv`, botão 📊 AAR) e incluído no log em texto. Facilitador-only.
+- **Toque + responsivo**: eventos `touchstart`/`touchend` no canvas espelham o
+  mouse; media query (`max-width:860px`) empilha o layout. Down payment de
+  acessibilidade — QA visual completo em dispositivos reais fica pendente.
+
+**P2 pendente** (UI, requer QA visual): formulário de unidade substituindo os 7
+`prompt()` / textarea JSON cru; timer de turno; jogadores iniciarem mensagens;
+persistência em disco/DB (a resiliência atual é em-memória com failover, não
+sobrevive a reinício do servidor).
+
 ---
 
 ## Pontos fortes
@@ -192,17 +219,17 @@ uma resolução força-contra-força em pulso único (redesenho, não ajuste).
 **P1 — rigor e método** — ✅ concluído (§A.5, `pbc_capacidades.md §8`); o item
 "staying power/admissibilidade" foi reavaliado e descartado por ser incorreto.
 
-**P2 — plataforma, dados e jogabilidade** (pendente)
-1. Persistência (SQLite ou snapshot JSON) + reconexão com grace period e
-   failover automático para bot; não deletar a sala na queda do facilitador.
-2. AAR estruturado: registro por engajamento (JSON/CSV) e relatório imprimível;
-   log sem truncamento.
-3. Formulário de unidade substituindo prompts/JSON cru; validação de schema da
-   OB no servidor; parser CSV multilinha e distinção `0` vs vazio.
-4. Lote assíncrono (worker) com progresso; timer de turno opcional;
-   responsividade e eventos touch básicos.
-5. Regenerar `output/coleta_*.csv` com o motor corrigido antes de qualquer
-   análise estatística (aplicando a orientação de CRN da §7).
+**P2 — plataforma, dados e jogabilidade** — ✅ núcleo concluído (§B.5):
+reconexão/failover para bot, sala persistente com grace period, validação de OB,
+lote assíncrono com progresso, parser CSV multilinha, AAR estruturado, toque +
+media query, datasets regenerados.
+
+**Pendente (P2 residual, requer QA visual em navegador/dispositivo):**
+1. Persistência em disco/DB (a resiliência atual é em-memória com failover; não
+   sobrevive a reinício do servidor).
+2. Formulário de unidade substituindo os 7 `prompt()` / textarea JSON cru.
+3. Timer de turno opcional; jogadores iniciarem mensagens ao facilitador.
+4. QA visual completo de responsividade/toque em dispositivos reais.
 
 ---
 

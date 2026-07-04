@@ -47,6 +47,15 @@ function exportLog(state, filename) {
       lines.push(`  [${rts}] ${r.from === 'blue' ? 'Azul' : 'Vermelho'}: ${r.text}`);
     }
   }
+  const hist = state.combatHistory || [];
+  if (hist.length) {
+    lines.push('');
+    lines.push('--- REGISTRO DE ENGAJAMENTOS (AAR) ---');
+    for (const h of hist) {
+      const outcome = h.destroyed ? 'DESTRUÍDO' : `−${h.actualLoss}SP (resta ${h.remainingHp})`;
+      lines.push(`  T${h.turn}/${h.period === 'day' ? 'D' : 'N'} ${h.attackerName}(${h.attackerTeam}) →[${h.weapon}] ${h.targetName}(${h.targetTeam}): ${outcome}`);
+    }
+  }
   lines.push('');
   lines.push('--- LOG DE BATALHA ---');
   for (const entry of ([...state.log]).reverse()) {
@@ -138,82 +147,26 @@ function exportRowsCsv(rows, columns, filename) {
   URL.revokeObjectURL(url);
 }
 
+// ─── Export after-action report (per-engagement) as CSV ─────────────────────────
+function exportAarCsv(combatHistory, filename) {
+  const columns = [
+    { key: 'turn', label: 'Turno' }, { key: 'period', label: 'Periodo' },
+    { key: 'engagementId', label: 'Engajamento' },
+    { key: 'attackerName', label: 'Atacante' }, { key: 'attackerTeam', label: 'Time_Atacante' },
+    { key: 'weapon', label: 'Arma' }, { key: 'launched', label: 'Disparos' },
+    { key: 'targetName', label: 'Alvo' }, { key: 'targetTeam', label: 'Time_Alvo' },
+    { key: 'actualLoss', label: 'Dano_SP' }, { key: 'remainingHp', label: 'SP_Restante' },
+    { key: 'destroyed', label: 'Destruido' },
+  ];
+  exportRowsCsv(combatHistory || [], columns, filename || `wargame-aar-${Date.now()}.csv`);
+}
+
 // ─── Import Order of Battle from CSV ──────────────────────────────────────────────
+// Delegates to the shared, multiline-safe parser (shared/ob_io.js, loaded as the
+// global OBIO). Keeps a minimal fallback only if that module failed to load.
 function importOBCsv(text) {
-  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim());
-  if (lines.length < 2) throw new Error('CSV vazio ou sem dados.');
-
-  function parseCsvRow(line) {
-    const fields = [];
-    let cur = '', inQuote = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuote && line[i+1] === '"') { cur += '"'; i++; }
-        else { inQuote = !inQuote; }
-      } else if (ch === ',' && !inQuote) {
-        fields.push(cur); cur = '';
-      } else {
-        cur += ch;
-      }
-    }
-    fields.push(cur);
-    return fields;
-  }
-
-  const headers = parseCsvRow(lines[0]);
-  const idx = {};
-  headers.forEach((h, i) => { idx[h.trim()] = i; });
-
-  const required = ['team','name','category','col','row'];
-  for (const r of required) {
-    if (idx[r] === undefined) throw new Error(`CSV sem coluna obrigatória: ${r}`);
-  }
-
-  const forces = { blue: [], red: [], neutral: [] };
-
-  lines.slice(1).forEach((line, li) => {
-    if (!line.trim()) return;
-    const f = parseCsvRow(line);
-    const get = (col, def = '') => (f[idx[col]] ?? def).trim();
-    const getN = (col, def = 0) => Number(get(col, String(def))) || def;
-    const getJ = (col, def = {}) => { try { return JSON.parse(get(col,'null')) ?? def; } catch { return def; } };
-
-    const team = get('team');
-    if (!['blue','red','neutral'].includes(team)) return;
-
-    const id = get('id') || `${team.toUpperCase()}-IMP-${li+1}`;
-    const spec = {
-      id,
-      name:          get('name', `Unit-${li+1}`),
-      category:      get('category', 'surface'),
-      subtype:       get('subtype', ''),
-      stayingPower:  getN('stayingPower', 2),
-      movement:      getN('movement', 2),
-      position:      { col: getN('col', 8), row: getN('row', 5) },
-      detectionRange:{
-        surface:   getN('det_surface', 0),
-        air:       getN('det_air', 0),
-        submarine: getN('det_submarine', 0),
-        land:      getN('det_land', 0),
-      },
-      attackRange: {
-        surface:   getN('atk_surface', 0),
-        air:       getN('atk_air', 0),
-        submarine: getN('atk_submarine', 0),
-        land:      getN('atk_land', 0),
-      },
-      weapons:      getJ('weapons_json', {}),
-      capabilities: getJ('capabilities_json', {}),
-      composition:  getJ('composition_json', []),
-      notes:        get('notes', ''),
-    };
-
-    if (!forces[team]) forces[team] = [];
-    forces[team].push(spec);
-  });
-
-  return { forces };
+  if (typeof OBIO !== 'undefined' && OBIO.obFromCsv) return OBIO.obFromCsv(text);
+  throw new Error('Módulo de importação (ob_io.js) não carregado.');
 }
 
 // ─── Trigger file input for CSV import ─────────────────────────────────────────────────

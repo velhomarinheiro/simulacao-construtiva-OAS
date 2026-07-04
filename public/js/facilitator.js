@@ -65,11 +65,21 @@ function facToggleFactor(checkbox) {
 }
 
 // Reflete a OB recalculada (após ligar/desligar fatores) na tabela de OB.
-function facHandleObUpdated({ ob }) {
-  if (!ob) return;
-  facOB = JSON.parse(JSON.stringify(ob));
-  const activeTab = document.querySelector('.fac-tab.active')?.dataset.team || 'blue';
-  facRenderOBTable(activeTab);
+function facHandleObUpdated(data) {
+  if (data && data.ok === false) {
+    const errs = (data.errors || []).slice(0, 3).join('; ');
+    showFacNotice(`⚠ OB rejeitada: ${errs}${(data.errors || []).length > 3 ? '…' : ''}`);
+    return;
+  }
+  if (data && data.ob) {
+    // Resposta de set_capability_factors: nova OB recomputada.
+    facOB = JSON.parse(JSON.stringify(data.ob));
+    const activeTab = document.querySelector('.fac-tab.active')?.dataset.team || 'blue';
+    facRenderOBTable(activeTab);
+    return;
+  }
+  // Resposta de update_ob bem-sucedida ({ok:true}).
+  showFacNotice('OB salva!');
 }
 
 // ─── TELA DE CONFIGURAÇÃO ─────────────────────────────────────────────────────
@@ -193,8 +203,7 @@ function facCloseModal() {
 
 function facSaveOB() {
   if (!facOB) return;
-  socket.emit('update_ob', { ob: facOB });
-  showFacNotice('OB salva!');
+  socket.emit('update_ob', { ob: facOB }); // sucesso/erro reportado em facHandleObUpdated
 }
 
 function facStartGame() {
@@ -517,6 +526,13 @@ function facExportImage() {
 
 function facExportLogFile() {
   exportLog(gameState);
+}
+
+function facExportAar() {
+  const hist = gameState?.combatHistory || [];
+  if (!hist.length) { showFacNotice('Sem engajamentos registrados ainda.'); return; }
+  exportAarCsv(hist, `wargame-aar-t${gameState?.turn||0}.csv`);
+  showFacNotice(`AAR exportado (${hist.length} engajamentos).`);
 }
 
 // ─── UTILIDADES ───────────────────────────────────────────────────────────────
