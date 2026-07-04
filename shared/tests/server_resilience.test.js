@@ -102,3 +102,45 @@ test('update_ob rejects a malformed order of battle', async () => {
   assert.equal(r.ok, false);
   assert.ok(Array.isArray(r.errors) && r.errors.length > 0);
 });
+
+test('player can initiate a message to the facilitator', async () => {
+  const fac = connect();
+  await ready(fac);
+  fac.emit('create_room');
+  const { roomId } = await once(fac, 'room_created');
+
+  const blue = connect();
+  await ready(blue);
+  blue.emit('join_room', { roomId, team: 'blue' });
+  await once(blue, 'join_success');
+  fac.emit('start_game', {});
+  await once(fac, 'game_start');
+
+  const incoming = once(fac, 'player_message');
+  blue.emit('player_message', { text: 'Solicito reforço aéreo.' });
+  const msg = await incoming;
+  assert.equal(msg.from, 'blue');
+  assert.equal(msg.to, 'facilitator');
+  assert.match(msg.text, /reforço aéreo/);
+});
+
+test('turn timer: expiry makes the AI act for a stalling human team', async () => {
+  const fac = connect();
+  await ready(fac);
+  fac.emit('create_room');
+  const { roomId } = await once(fac, 'room_created');
+
+  const blue = connect();
+  await ready(blue);
+  blue.emit('join_room', { roomId, team: 'blue' });
+  await once(blue, 'join_success');
+
+  // 1s turn timer; blue is human and will NOT act -> AI should take over.
+  const timeoutEvt = once(fac, 'turn_timeout');
+  fac.emit('start_game', { turnTimer: 1 });
+  await once(fac, 'game_start');
+  const ev = await timeoutEvt;
+  assert.ok(ev.teams.includes('blue'), 'AI forced blue after the deadline');
+  // Blue's movement got committed on its behalf -> state advanced past movement.
+  assert.equal(rooms.get(roomId).state.blueDone, true);
+});

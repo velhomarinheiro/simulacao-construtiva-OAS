@@ -141,60 +141,124 @@ function facDeleteUnit(team, idx) {
   socket.emit('update_ob', { ob: facOB });
 }
 
+// ─── FORMULÁRIO DE UNIDADE (add/edit sem prompts nem JSON cru) ─────────────────
+const FUM_WEAPON_TYPES = ['ascm', 'mss', 'torpedo', 'lacm', 'asbm'];
+const FUM_CAP_TYPES    = ['airDefense', 'bmd', 'asw', 'airAttack', 'navalGun'];
+let _fumMode = null, _fumTeam = null, _fumIdx = null, _fumUnitId = null;
+
+function _fumOpts(list, sel) {
+  return Array.from(new Set([...list, sel].filter(Boolean)))
+    .map(t => `<option value="${t}" ${t === sel ? 'selected' : ''}>${t}</option>`).join('');
+}
+function facWpnRowHtml(type, qty, range) {
+  return `<div class="fum-row">
+    <select class="fac-input fum-wtype">${_fumOpts(FUM_WEAPON_TYPES, type)}</select>
+    <input type="number" class="fac-input fum-wqty"   min="0" placeholder="qtd" value="${qty ?? ''}">
+    <input type="number" class="fac-input fum-wrange" min="0" placeholder="alc" value="${range ?? ''}">
+    <button type="button" class="fac-small-btn red" onclick="this.parentElement.remove()">✕</button>
+  </div>`;
+}
+function facCapRowHtml(type, val) {
+  return `<div class="fum-row">
+    <select class="fac-input fum-ctype">${_fumOpts(FUM_CAP_TYPES, type)}</select>
+    <input type="number" class="fac-input fum-cval" min="0" placeholder="valor" value="${val ?? ''}">
+    <button type="button" class="fac-small-btn red" onclick="this.parentElement.remove()">✕</button>
+  </div>`;
+}
+function facAddWpnRow() { document.getElementById('fum-weapons-list').insertAdjacentHTML('beforeend', facWpnRowHtml('ascm', '', '')); }
+function facAddCapRow() { document.getElementById('fum-caps-list').insertAdjacentHTML('beforeend', facCapRowHtml('airDefense', '')); }
+
+function facFillModal(spec, team, spValue) {
+  const g = id => document.getElementById(id);
+  g('fum-team').value = team || 'neutral';
+  g('fum-name').value = spec.name || '';
+  g('fum-category').value = spec.category || 'surface';
+  g('fum-sp').value = spValue ?? spec.stayingPower ?? spec.maxHp ?? 2;
+  g('fum-mov').value = spec.movement ?? 0;
+  g('fum-col').value = spec.position?.col ?? spec.col ?? 8;
+  g('fum-row').value = spec.position?.row ?? spec.row ?? 5;
+  const d = spec.detectionRange || {}, a = spec.attackRange || {};
+  g('fum-det-s').value = d.surface ?? 0; g('fum-det-a').value = d.air ?? 0;
+  g('fum-det-sb').value = d.submarine ?? 0; g('fum-det-l').value = d.land ?? 0;
+  g('fum-atk-s').value = a.surface ?? 0; g('fum-atk-a').value = a.air ?? 0;
+  g('fum-atk-sb').value = a.submarine ?? 0; g('fum-atk-l').value = a.land ?? 0;
+  const wl = g('fum-weapons-list'); wl.innerHTML = '';
+  for (const [t, w] of Object.entries(spec.weapons || {})) wl.insertAdjacentHTML('beforeend', facWpnRowHtml(t, (w && w.quantity != null) ? w.quantity : w, w && w.range));
+  const cl = g('fum-caps-list'); cl.innerHTML = '';
+  for (const [t, v] of Object.entries(spec.capabilities || {})) cl.insertAdjacentHTML('beforeend', facCapRowHtml(t, v));
+  g('fum-notes').value = spec.notes || '';
+  document.getElementById('fac-unit-modal').classList.remove('hidden');
+  document.getElementById('fum-save').onclick = facSaveUnitModal;
+}
+function facReadModalSpec() {
+  const g = id => document.getElementById(id);
+  const n = id => Number(g(id).value) || 0;
+  const weapons = {};
+  document.querySelectorAll('#fum-weapons-list .fum-row').forEach(r => {
+    const t = r.querySelector('.fum-wtype').value;
+    const q = Number(r.querySelector('.fum-wqty').value);
+    const rng = Number(r.querySelector('.fum-wrange').value);
+    if (t && q > 0) weapons[t] = { quantity: q, range: rng > 0 ? rng : 1 };
+  });
+  const capabilities = {};
+  document.querySelectorAll('#fum-caps-list .fum-row').forEach(r => {
+    const t = r.querySelector('.fum-ctype').value;
+    const v = Number(r.querySelector('.fum-cval').value);
+    if (t && v > 0) capabilities[t] = v;
+  });
+  return {
+    team: g('fum-team').value, name: g('fum-name').value.trim(),
+    category: g('fum-category').value, stayingPower: n('fum-sp') || 2, movement: n('fum-mov'),
+    col: n('fum-col'), row: n('fum-row'),
+    detectionRange: { surface: n('fum-det-s'), air: n('fum-det-a'), submarine: n('fum-det-sb'), land: n('fum-det-l') },
+    attackRange: { surface: n('fum-atk-s'), air: n('fum-atk-a'), submarine: n('fum-atk-sb'), land: n('fum-atk-l') },
+    weapons, capabilities, notes: g('fum-notes').value,
+  };
+}
+
 function facEditUnit(team, idx) {
   const spec = facOB.forces[team]?.[idx];
   if (!spec) return;
-  const modal = document.getElementById('fac-unit-modal');
-  modal.classList.remove('hidden');
-
+  _fumMode = 'config-edit'; _fumTeam = team; _fumIdx = idx;
   document.getElementById('fum-title').textContent = `Editando: ${spec.name} (${team})`;
-  document.getElementById('fum-name').value      = spec.name;
-  document.getElementById('fum-category').value  = spec.category;
-  document.getElementById('fum-sp').value        = spec.stayingPower;
-  document.getElementById('fum-mov').value       = spec.movement;
-  document.getElementById('fum-col').value       = spec.position?.col ?? 8;
-  document.getElementById('fum-row').value       = spec.position?.row ?? 5;
-  document.getElementById('fum-det-s').value     = spec.detectionRange?.surface   ?? 0;
-  document.getElementById('fum-det-a').value     = spec.detectionRange?.air       ?? 0;
-  document.getElementById('fum-det-sb').value    = spec.detectionRange?.submarine ?? 0;
-  document.getElementById('fum-det-l').value     = spec.detectionRange?.land      ?? 0;
-  document.getElementById('fum-atk-s').value     = spec.attackRange?.surface      ?? 0;
-  document.getElementById('fum-atk-a').value     = spec.attackRange?.air          ?? 0;
-  document.getElementById('fum-atk-sb').value    = spec.attackRange?.submarine    ?? 0;
-  document.getElementById('fum-atk-l').value     = spec.attackRange?.land         ?? 0;
-  document.getElementById('fum-weapons').value   = JSON.stringify(spec.weapons || {}, null, 2);
-  document.getElementById('fum-caps').value      = JSON.stringify(spec.capabilities || {}, null, 2);
-  document.getElementById('fum-notes').value     = spec.notes || '';
+  facFillModal(spec, team);
+}
 
-  document.getElementById('fum-save').onclick = () => {
-    try {
-      spec.name          = document.getElementById('fum-name').value.trim() || spec.name;
-      spec.category      = document.getElementById('fum-category').value;
-      spec.stayingPower  = Number(document.getElementById('fum-sp').value)  || 2;
-      spec.movement      = Number(document.getElementById('fum-mov').value) || 0;
-      spec.position      = { col: Number(document.getElementById('fum-col').value), row: Number(document.getElementById('fum-row').value) };
-      spec.detectionRange = {
-        surface:   Number(document.getElementById('fum-det-s').value)  || 0,
-        air:       Number(document.getElementById('fum-det-a').value)  || 0,
-        submarine: Number(document.getElementById('fum-det-sb').value) || 0,
-        land:      Number(document.getElementById('fum-det-l').value)  || 0,
-      };
-      spec.attackRange = {
-        surface:   Number(document.getElementById('fum-atk-s').value)  || 0,
-        air:       Number(document.getElementById('fum-atk-a').value)  || 0,
-        submarine: Number(document.getElementById('fum-atk-sb').value) || 0,
-        land:      Number(document.getElementById('fum-atk-l').value)  || 0,
-      };
-      spec.weapons      = JSON.parse(document.getElementById('fum-weapons').value || '{}');
-      spec.capabilities = JSON.parse(document.getElementById('fum-caps').value    || '{}');
-      spec.notes        = document.getElementById('fum-notes').value;
-      facCloseModal();
-      facRenderOBTable(team);
-      socket.emit('update_ob', { ob: facOB });
-    } catch (e) {
-      alert('JSON inválido em Armas ou Capacidades: ' + e.message);
+function facSaveUnitModal() {
+  const s = facReadModalSpec();
+  if (!s.name) { showFacNotice('Informe o nome da unidade.'); return; }
+  const position = { col: s.col, row: s.row };
+
+  if (_fumMode === 'config-edit') {
+    const spec = facOB.forces[_fumTeam]?.[_fumIdx];
+    if (!spec) { facCloseModal(); return; }
+    Object.assign(spec, {
+      name: s.name, category: s.category, stayingPower: s.stayingPower, movement: s.movement,
+      position, detectionRange: s.detectionRange, attackRange: s.attackRange,
+      weapons: s.weapons, capabilities: s.capabilities, notes: s.notes,
+    });
+    if (s.team !== _fumTeam) { // moved between forces
+      facOB.forces[_fumTeam].splice(_fumIdx, 1);
+      (facOB.forces[s.team] = facOB.forces[s.team] || []).push(spec);
     }
-  };
+    facCloseModal();
+    facRenderOBTable(document.querySelector('.fac-tab.active')?.dataset.team || _fumTeam);
+    socket.emit('update_ob', { ob: facOB });
+  } else if (_fumMode === 'live-add') {
+    socket.emit('facilitator_manage_unit', { action: 'add', data: {
+      team: s.team, name: s.name, category: s.category, stayingPower: s.stayingPower, movement: s.movement,
+      col: s.col, row: s.row, detectionRange: s.detectionRange, attackRange: s.attackRange,
+      weapons: s.weapons, capabilities: s.capabilities, composition: [],
+    } });
+    facCloseModal();
+  } else if (_fumMode === 'live-edit') {
+    socket.emit('facilitator_manage_unit', { action: 'edit', unitId: _fumUnitId, data: {
+      name: s.name, category: s.category, movement: s.movement, stayingPower: s.stayingPower,
+      col: s.col, row: s.row, detectionRange: s.detectionRange, attackRange: s.attackRange,
+      weapons: s.weapons, capabilities: s.capabilities,
+    } });
+    facCloseModal();
+  }
 }
 
 function facCloseModal() {
@@ -212,7 +276,9 @@ function facStartGame() {
   const seedInput = document.getElementById('fac-seed-input');
   const seedRaw   = seedInput ? seedInput.value.trim() : '';
   const seed      = seedRaw === '' ? null : Number(seedRaw);
-  socket.emit('start_game', { seed });
+  const timerRaw  = document.getElementById('fac-turn-timer')?.value.trim() || '';
+  const turnTimer = timerRaw === '' ? 0 : Number(timerRaw);
+  socket.emit('start_game', { seed, turnTimer });
 }
 
 // ─── SIMULAÇÕES EM LOTE (IA × IA) ─────────────────────────────────────────────
@@ -453,12 +519,21 @@ function facRenderMessages(messages) {
   }
   el.innerHTML = messages.map(m => {
     const ts  = new Date(m.timestamp).toLocaleTimeString('pt-BR');
-    const to  = m.to === 'all' ? 'Todos' : m.to === 'blue' ? 'Azul' : 'Vermelho';
     const replies = (m.replies || []).map(r => {
       const rts = new Date(r.timestamp).toLocaleTimeString('pt-BR');
       const rc  = r.from === 'blue' ? 'fac-blue' : 'fac-red';
       return `<div class="fac-reply"><span class="${rc}">${r.from === 'blue' ? 'Azul' : 'Vermelho'}(${rts}):</span> ${escHtml(r.text)}</div>`;
     }).join('');
+    if (m.from === 'blue' || m.from === 'red') {
+      // Mensagem iniciada por um jogador.
+      const fc = m.from === 'blue' ? 'fac-blue' : 'fac-red';
+      return `<div class="fac-msg-item fac-msg-incoming">
+        <div class="fac-msg-header"><span class="${fc}">${m.from === 'blue' ? 'AZUL' : 'VERMELHO'}</span> → <span class="fac-gold">FACILITADOR</span> <span class="fac-dim">[${ts}]</span></div>
+        <div class="fac-msg-body">${escHtml(m.text)}</div>
+        ${replies}
+      </div>`;
+    }
+    const to = m.to === 'all' ? 'Todos' : m.to === 'blue' ? 'Azul' : 'Vermelho';
     return `<div class="fac-msg-item">
       <div class="fac-msg-header"><span class="fac-gold">FACILITADOR</span> → <span>${to}</span> <span class="fac-dim">[${ts}]</span></div>
       <div class="fac-msg-body">${escHtml(m.text)}</div>
@@ -480,18 +555,24 @@ function facRenderUnitManager(state) {
       <span class="${tc}">${u.name}</span>
       <span class="fac-dim">SP:${u.hp}/${u.maxHp} ${pos}</span>
       <div class="fac-unit-row-btns">
-        <button class="fac-small-btn" onclick="facQuickEditUnit('${u.id}','${u.name}',${u.hp},${u.maxHp})">✏</button>
+        <button class="fac-small-btn" onclick="facQuickEditUnit('${u.id}')">✏</button>
         <button class="fac-small-btn red" onclick="facRemoveUnit('${u.id}','${u.name}')">✕</button>
       </div>
     </div>`;
   }).join('');
 }
 
-function facQuickEditUnit(unitId, name, hp, maxHp) {
-  const newHp = prompt(`HP de ${name} (0–${maxHp}):`, hp);
-  if (newHp === null) return;
-  const h = Math.max(0, Math.min(maxHp, Number(newHp)));
-  socket.emit('facilitator_manage_unit', { action: 'edit', unitId, data: { hp: h } });
+function facQuickEditUnit(unitId) {
+  const u = gameState?.units.find(x => x.id === unitId);
+  if (!u) return;
+  _fumMode = 'live-edit'; _fumUnitId = unitId; _fumTeam = u.team;
+  document.getElementById('fum-title').textContent = `Editando: ${u.name}`;
+  // In live mode the SP field is the unit's current staying power (max).
+  facFillModal({
+    name: u.name, category: u.category, movement: u.movement,
+    position: { col: u.col, row: u.row }, detectionRange: u.detectionRange,
+    attackRange: u.attackRange, weapons: u.weapons, capabilities: u.capabilities, notes: u.notes,
+  }, u.team, u.maxHp);
 }
 
 function facRemoveUnit(unitId, name) {
@@ -500,22 +581,10 @@ function facRemoveUnit(unitId, name) {
 }
 
 function facAddNewUnit() {
-  const team = prompt('Equipe (blue / red / neutral):', 'neutral');
-  if (!['blue','red','neutral'].includes(team)) { alert('Equipe inválida.'); return; }
-  const name = prompt('Nome da unidade:', 'Nova Unidade');
-  if (!name) return;
-  const cat  = prompt('Categoria (surface/submarine/air/land):', 'surface');
-  const col  = Number(prompt('Coluna (0–15):', '8'));
-  const row  = Number(prompt('Linha (0–9):',   '5'));
-  const sp   = Number(prompt('SP (Staying Power):', '2'));
-  const mov  = Number(prompt('Movimento:', '2'));
-  socket.emit('facilitator_manage_unit', {
-    action: 'add',
-    data: { team, name, category: cat||'surface', stayingPower: sp||2, movement: mov||0, col, row,
-            detectionRange:{surface:0,air:0,submarine:0,land:0},
-            attackRange:{surface:0,air:0,submarine:0,land:0},
-            weapons:{}, capabilities:{}, composition:[] },
-  });
+  _fumMode = 'live-add'; _fumTeam = null; _fumIdx = null; _fumUnitId = null;
+  document.getElementById('fum-title').textContent = 'NOVA UNIDADE';
+  facFillModal({ name: 'Nova Unidade', category: 'surface', stayingPower: 2, movement: 2,
+    position: { col: 8, row: 5 }, weapons: {}, capabilities: {} }, 'neutral');
 }
 
 // ─── EXPORT ───────────────────────────────────────────────────────────────────

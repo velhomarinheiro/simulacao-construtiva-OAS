@@ -31,6 +31,7 @@ const io=new Server(server,{cors:{origin:'*'}});
 app.use(express.static(path.join(__dirname,'public')));
 app.get('/',(_, res)=>res.sendFile(path.join(__dirname,'public','index.html')));
 app.get('/game',(_, res)=>res.sendFile(path.join(__dirname,'public','game.html')));
+app.get('/favicon.ico',(_, res)=>res.status(204).end());
 // Shared OB import/validation module, reused verbatim by the browser importer.
 app.get('/shared/ob_io.js',(_, res)=>res.sendFile(path.join(__dirname,'shared','ob_io.js')));
 
@@ -60,6 +61,7 @@ function endCombatPhase(room){
   const state=room.state;
   const{winner}=finishCombatPhase(state);
   if(winner){
+    clearTurnTimer(room);
     broadcast(room,'game_over',{winner,state:null});
     return;
   }
@@ -132,6 +134,49 @@ function runBotsForPhase(room){
       declareAttacksForTeam(room,team,decideAttacks(stateFor(state,team),team));
     }
   }
+}
+
+// ─── Timer de turno (opcional) ───────────────────────────────────────────────
+// Se o facilitador configurar um limite de tempo por fase, cada fase que aguarda
+// uma equipe HUMANA recebe um prazo; ao expirar, a IA age pela(s) equipe(s)
+// pendente(s), evitando que um jogador lento trave a partida.
+function clearTurnTimer(room){ if(room.turnTimer){clearTimeout(room.turnTimer);room.turnTimer=null;} }
+function emitToRoom(room,ev,payload){
+  for(const pid of [room.players.blue,room.players.red,room.players.facilitator]) if(pid) io.to(pid).emit(ev,payload);
+}
+function pendingHumanTeams(room){
+  const s=room.state; if(!s) return [];
+  const out=[];
+  for(const t of ['blue','red']){
+    if(!room.players[t]) continue; // sem humano => IA já cobre
+    if(s.phase==='movement'&&!s[t==='blue'?'blueDone':'redDone']) out.push(t);
+    else if(s.phase==='combat'&&s[t==='blue'?'blueAttacks':'redAttacks']===null) out.push(t);
+  }
+  return out;
+}
+function armTurnTimer(room){
+  clearTurnTimer(room);
+  const s=room.state;
+  if(!s||s.winner||!room.turnTimerSec){ emitToRoom(room,'turn_deadline',{deadline:null}); return; }
+  if((s.phase!=='movement'&&s.phase!=='combat')||pendingHumanTeams(room).length===0){
+    emitToRoom(room,'turn_deadline',{deadline:null}); return;
+  }
+  const ms=room.turnTimerSec*1000, deadline=Date.now()+ms;
+  emitToRoom(room,'turn_deadline',{deadline,phase:s.phase});
+  room.turnTimer=setTimeout(()=>forcePendingActions(room),ms);
+  if(room.turnTimer.unref) room.turnTimer.unref();
+}
+function forcePendingActions(room){
+  room.turnTimer=null;
+  const s=room.state;
+  if(!s||s.winner) return;
+  const pend=pendingHumanTeams(room);
+  if(pend.length===0){ emitToRoom(room,'turn_deadline',{deadline:null}); return; }
+  s.log.unshift(`⏱ Tempo esgotado — IA agiu por ${pend.map(t=>t==='blue'?'Azul':'Vermelho').join(', ')}.`);
+  emitToRoom(room,'turn_timeout',{teams:pend});
+  if(s.phase==='movement'){ for(const t of pend) commitMovesForTeam(room,t,decideMovement(stateFor(s,t),t)); }
+  else if(s.phase==='combat'){ for(const t of pend) declareAttacksForTeam(room,t,decideAttacks(stateFor(s,t),t)); }
+  armTurnTimer(room); // rearma para a próxima fase que aguarde humano
 }
 
 // ─── Simulações em lote (IA × IA), conforme tools/batch_runner.js ─────────
@@ -324,17 +369,20 @@ io.on('connection',socket=>{
   });
 
   // ── Config: facilitador inicia o jogo ──────────────────────────
-  socket.on('start_game',({seed}={})=>{
+  socket.on('start_game',({seed,turnTimer}={})=>{
     const room=rooms.get(socket.data.roomId);
     if(!room||socket.data.role!=='facilitator') return;
     room.bots={blue:!room.players.blue,red:!room.players.red};
     const parsedSeed=Number(seed);
     room.seed=(seed===null||seed===undefined||seed===''||Number.isNaN(parsedSeed))?undefined:parsedSeed;
+    const t=Math.floor(Number(turnTimer));
+    room.turnTimerSec=(Number.isFinite(t)&&t>0)?Math.min(3600,t):0;
     room.state=newGame(room.customOB,{seed:room.seed});
     if(room.players.blue) io.to(room.players.blue).emit('game_start',{role:'blue',state:stateFor(room.state,'blue')});
     if(room.players.red ) io.to(room.players.red ).emit('game_start',{role:'red', state:stateFor(room.state,'red')});
     socket.emit('game_start',{role:'facilitator',state:stateFor(room.state,'facilitator')});
     runBotsForPhase(room);
+    armTurnTimer(room);
   });
 
   // ── Movimentação ────────────────────────────────────────────
@@ -352,6 +400,7 @@ io.on('connection',socket=>{
     if(!validation.ok){socket.emit('action_error',validation.error);return;}
 
     commitMovesForTeam(room,team,moves);
+    armTurnTimer(room);
   });
 
   // ── Facilitador aprova movimentos (com opção de reposicionamento) ─────────
@@ -364,6 +413,7 @@ io.on('connection',socket=>{
     applyMovementApproval(state,overrides);
     broadcast(room);
     runBotsForPhase(room);
+    armTurnTimer(room);
   });
 
   // ── Combate: declaração de ataques ─────────────────────────────
@@ -375,6 +425,7 @@ io.on('connection',socket=>{
     if(!['blue','red'].includes(team)) return;
     if(state.phase!=='combat'){socket.emit('action_error','Não é a fase de combate.');return;}
     declareAttacksForTeam(room,team,attacks);
+    armTurnTimer(room);
   });
 
   // ── Facilitador aprova resultados de combate ─────────────────────
@@ -386,11 +437,13 @@ io.on('connection',socket=>{
 
     const{winner}=applyCombatApproval(state,hpChanges);
     if(winner){
+      clearTurnTimer(room);
       broadcast(room,'game_over');
       return;
     }
     broadcast(room);
     runBotsForPhase(room);
+    armTurnTimer(room);
   });
 
   // ── Mensagens do Facilitador ──────────────────────────────────
@@ -431,17 +484,42 @@ io.on('connection',socket=>{
     facBroadcast(room);
   });
 
+  // ── Jogador inicia mensagem ao facilitador ──────────────────────────
+  socket.on('player_message',({text})=>{
+    const room=rooms.get(socket.data.roomId);
+    if(!room?.state) return;
+    const{role}=socket.data;
+    if(!['blue','red'].includes(role)) return;
+    if(!text?.trim()) return;
+    const msg={
+      id:`PMSG-${Date.now()}`,
+      from:role,to:'facilitator',
+      text:text.trim(),
+      timestamp:new Date().toISOString(),
+      replies:[],
+    };
+    room.state.messages.push(msg);
+    room.state.log.unshift(`✉ ${role==='blue'?'Azul':'Vermelho'} → Facilitador: "${text.trim().slice(0,40)}"`);
+    if(room.players.facilitator) io.to(room.players.facilitator).emit('player_message',msg);
+    socket.emit('message_sent',{msgId:msg.id});
+    facBroadcast(room);
+  });
+
   // ── Gerenciamento de unidades pelo facilitador ──────────────────────
   socket.on('facilitator_manage_unit',({action,unitId,data})=>{
     const room=rooms.get(socket.data.roomId);
     if(!room?.state||socket.data.role!=='facilitator') return;
     const{state}=room;
 
+    const clampCol=c=>Math.max(0,Math.min(GRID_W-1,Number(c)||0));
+    const clampRow=r=>Math.max(0,Math.min(GRID_H-1,Number(r)||0));
+
     if(action==='add'){
       // data = spec object
-      const team=data.team||'neutral';
+      const team=['blue','red','neutral'].includes(data.team)?data.team:'neutral';
       const newId=genUnitId(team);
-      const spec={...data,id:newId,position:{col:data.col??8,row:data.row??5}};
+      const col=clampCol(data.col??8),row=clampRow(data.row??5);
+      const spec={...data,id:newId,position:{col,row}};
       const unit=makeUnit(team,spec);
       state.units.push(unit);
       state.log.unshift(`➕ Facilitador adicionou ${unit.name} (${team})`);
@@ -449,9 +527,16 @@ io.on('connection',socket=>{
     }else if(action==='edit'&&unitId){
       const unit=state.units.find(u=>u.id===unitId);
       if(!unit) return;
-      if(data.hp!=null) unit.hp=Math.max(0,Math.min(unit.maxHp,Number(data.hp)));
-      if(data.col!=null&&data.row!=null){unit.col=Number(data.col);unit.row=Number(data.row);}
       if(data.name) unit.name=data.name;
+      if(data.category) unit.category=data.category;
+      if(data.movement!=null) unit.movement=Math.max(0,Number(data.movement)||0);
+      if(data.stayingPower!=null){const sp=Math.max(1,Number(data.stayingPower)||1);unit.maxHp=sp;unit.hp=Math.min(unit.hp,sp);}
+      if(data.hp!=null) unit.hp=Math.max(0,Math.min(unit.maxHp,Number(data.hp)));
+      if(data.col!=null&&data.row!=null){unit.col=clampCol(data.col);unit.row=clampRow(data.row);}
+      if(data.detectionRange&&typeof data.detectionRange==='object') unit.detectionRange=data.detectionRange;
+      if(data.attackRange&&typeof data.attackRange==='object') unit.attackRange=data.attackRange;
+      if(data.weapons&&typeof data.weapons==='object') unit.weapons=data.weapons;
+      if(data.capabilities&&typeof data.capabilities==='object') unit.capabilities=data.capabilities;
       if(data.status) unit.customStatus=data.status;
       state.log.unshift(`✏ Facilitador editou ${unit.name}`);
       broadcast(room);
@@ -486,6 +571,7 @@ io.on('connection',socket=>{
     if(room.players.red)  io.to(room.players.red ).emit('game_start',{role:'red', state:stateFor(room.state,'red')});
     socket.emit('game_start',{role:'facilitator',state:stateFor(room.state,'facilitator')});
     runBotsForPhase(room);
+    armTurnTimer(room);
   });
 
   // ── Facilitador reassume uma sala após reload/reconexão ──────────────────
@@ -523,7 +609,7 @@ io.on('connection',socket=>{
       if(room.cleanupTimer) clearTimeout(room.cleanupTimer);
       room.cleanupTimer=setTimeout(()=>{
         const r=rooms.get(roomId);
-        if(r&&!r.players.facilitator) rooms.delete(roomId);
+        if(r&&!r.players.facilitator){clearTurnTimer(r);rooms.delete(roomId);}
       },ROOM_GRACE_MS);
       if(room.cleanupTimer.unref) room.cleanupTimer.unref();
       return;

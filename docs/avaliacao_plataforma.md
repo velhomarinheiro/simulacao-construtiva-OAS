@@ -187,13 +187,24 @@ uma resolução força-contra-força em pulso único (redesenho, não ajuste).
   (turno, atacante, alvo, arma, dano, destruição); exportável em CSV
   (`exportAarCsv`, botão 📊 AAR) e incluído no log em texto. Facilitador-only.
 - **Toque + responsivo**: eventos `touchstart`/`touchend` no canvas espelham o
-  mouse; media query (`max-width:860px`) empilha o layout. Down payment de
-  acessibilidade — QA visual completo em dispositivos reais fica pendente.
+  mouse; media query (`max-width:860px`) empilha o layout. QA visual por
+  Playwright (viewports 390/820): 0 px de overflow horizontal, sidebars
+  empilhadas, toque seleciona hex, modal cabe na tela.
+- **Formulário de unidade**: os 7 `prompt()` e os textareas de JSON cru foram
+  substituídos por um modal estruturado unificado (add/edit, config e ao vivo)
+  com seletor de equipe e editores de armas/capacidades por linha
+  (`facilitator.js`); edição ao vivo agora aplica todos os campos e limita a
+  posição ao tabuleiro no servidor.
+- **Timer de turno**: opcional (`room.turnTimerSec`, configurado no start);
+  ao expirar, a IA age pela equipe humana pendente (evita travar). Contagem
+  regressiva no cabeçalho via evento `turn_deadline`.
+- **Mensagens do jogador**: jogadores iniciam mensagens ao facilitador
+  (`player_message` + caixa de composição no sidebar), exibidas no log do
+  facilitador.
 
-**P2 pendente** (UI, requer QA visual): formulário de unidade substituindo os 7
-`prompt()` / textarea JSON cru; timer de turno; jogadores iniciarem mensagens;
-persistência em disco/DB (a resiliência atual é em-memória com failover, não
-sobrevive a reinício do servidor).
+**P2 pendente** (menor): persistência em disco/DB (a resiliência atual é
+em-memória com failover, não sobrevive a reinício do servidor); tela de
+configuração do facilitador (editor de OB) permanece orientada a desktop.
 
 ---
 
@@ -224,12 +235,14 @@ reconexão/failover para bot, sala persistente com grace period, validação de 
 lote assíncrono com progresso, parser CSV multilinha, AAR estruturado, toque +
 media query, datasets regenerados.
 
-**Pendente (P2 residual, requer QA visual em navegador/dispositivo):**
+**P2 residual concluído**: formulário de unidade estruturado, timer de turno,
+mensagens iniciadas pelo jogador e QA visual de responsividade/toque (§B.5).
+
+**Pendente (menor):**
 1. Persistência em disco/DB (a resiliência atual é em-memória com failover; não
    sobrevive a reinício do servidor).
-2. Formulário de unidade substituindo os 7 `prompt()` / textarea JSON cru.
-3. Timer de turno opcional; jogadores iniciarem mensagens ao facilitador.
-4. QA visual completo de responsividade/toque em dispositivos reais.
+2. Tela de configuração do facilitador (editor de OB, tabela larga) permanece
+   orientada a desktop — o jogo em si é responsivo.
 
 ---
 

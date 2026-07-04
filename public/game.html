@@ -103,6 +103,11 @@
         Semente (opcional)
         <input id="fac-seed-input" type="number" class="fac-input" placeholder="determinístico" min="0" step="1">
       </label>
+      <label class="fac-seed-label" style="margin-top:8px">
+        Timer de turno (seg, opcional)
+        <input id="fac-turn-timer" type="number" class="fac-input" placeholder="sem limite" min="0" step="5">
+      </label>
+      <p class="fac-hint">Ao expirar, a IA age pela equipe humana que não concluiu a fase (evita travar a partida).</p>
 
       <div class="config-section-title" style="margin-top:14px">SIMULAÇÕES EM LOTE (IA × IA)</div>
       <p class="fac-hint">
@@ -152,6 +157,13 @@
   <div class="fac-modal-box">
     <div id="fum-title" class="fac-modal-title">EDITAR UNIDADE</div>
     <div class="fac-modal-grid">
+      <label>Equipe</label>
+      <select id="fum-team" class="fac-input">
+        <option value="blue">Azul</option>
+        <option value="red">Vermelho</option>
+        <option value="neutral">Neutro</option>
+      </select>
+
       <label>Nome</label>
       <input id="fum-name" type="text" class="fac-input">
 
@@ -199,11 +211,17 @@
       <label>Atq. Terrestre</label>
       <input id="fum-atk-l"  type="number" min="0" max="20" class="fac-input">
 
-      <label>Armas (JSON)</label>
-      <textarea id="fum-weapons" class="fac-input" rows="3">{}</textarea>
+      <label>Armas</label>
+      <div class="fum-editor">
+        <div id="fum-weapons-list"></div>
+        <button type="button" class="fac-small-btn" onclick="facAddWpnRow()">+ arma</button>
+      </div>
 
-      <label>Capacidades (JSON)</label>
-      <textarea id="fum-caps" class="fac-input" rows="2">{}</textarea>
+      <label>Capacidades</label>
+      <div class="fum-editor">
+        <div id="fum-caps-list"></div>
+        <button type="button" class="fac-small-btn" onclick="facAddCapRow()">+ capacidade</button>
+      </div>
 
       <label>Notas</label>
       <textarea id="fum-notes" class="fac-input" rows="2"></textarea>
@@ -245,6 +263,7 @@
   <!-- Header bar -->
   <header class="game-header">
     <div class="header-title">OPERAÇÃO ATLÂNTICO SUL</div>
+    <div id="turn-timer-display" class="turn-timer-display hidden">⏱ <span id="turn-timer-secs">0</span>s</div>
     <div id="my-turn-banner" class="my-turn-banner">▶ SUA VEZ</div>
     <div id="waiting-approval-banner" class="waiting-approval-banner hidden">
       ⌛ Aguardando aprovação do Facilitador...
@@ -320,6 +339,13 @@
           <div class="tleg-row"><span class="ileg-ic" style="color:#b0bec5">✈</span>Base Aérea</div>
           <div class="tleg-row"><span class="ileg-ic" style="color:#ffcc02">▲</span>Plataforma PLT</div>
         </div>
+      </div>
+
+      <!-- Mensagem ao facilitador (iniciada pelo jogador) -->
+      <div class="panel msg-fac-panel">
+        <div class="panel-title">MENSAGEM AO FACILITADOR</div>
+        <textarea id="player-msg-compose" class="fac-input" rows="2" placeholder="Escreva ao facilitador..."></textarea>
+        <button id="player-msg-send" class="act-btn gray" onclick="playerSendMessage()">Enviar</button>
       </div>
 
       <div class="panel log-panel">

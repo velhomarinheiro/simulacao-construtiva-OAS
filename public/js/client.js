@@ -108,6 +108,49 @@ socket.on('player_ai_takeover', ({ team }) => {
   }
 });
 
+// ─── Timer de turno ────────────────────────────────────────────────────────────
+let _turnTimerInterval = null;
+function stopTurnTimerDisplay() {
+  if (_turnTimerInterval) { clearInterval(_turnTimerInterval); _turnTimerInterval = null; }
+  document.getElementById('turn-timer-display')?.classList.add('hidden');
+}
+socket.on('turn_deadline', ({ deadline }) => {
+  const disp = document.getElementById('turn-timer-display');
+  const secsEl = document.getElementById('turn-timer-secs');
+  if (!disp || !secsEl) return;
+  if (_turnTimerInterval) { clearInterval(_turnTimerInterval); _turnTimerInterval = null; }
+  if (!deadline) { disp.classList.add('hidden'); return; }
+  disp.classList.remove('hidden');
+  const tick = () => {
+    const rem = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+    secsEl.textContent = rem;
+    disp.classList.toggle('urgent', rem <= 10);
+    if (rem <= 0) { clearInterval(_turnTimerInterval); _turnTimerInterval = null; }
+  };
+  tick();
+  _turnTimerInterval = setInterval(tick, 500);
+});
+socket.on('turn_timeout', ({ teams }) => {
+  stopTurnTimerDisplay();
+  const mine = teams && teams.includes(myRole);
+  if (mine) flashError('⏱ Tempo esgotado — a IA agiu por você nesta fase.');
+  else if (typeof showFacNotice === 'function') showFacNotice(`⏱ Tempo esgotado — IA agiu por ${teams.map(t => t === 'blue' ? 'Azul' : 'Vermelho').join(', ')}.`);
+});
+
+// ─── Mensagem iniciada pelo jogador ────────────────────────────────────────────
+socket.on('player_message', () => {
+  // O estado (state.messages) é re-renderizado via facBroadcast; aqui só avisamos.
+  if (typeof showFacNotice === 'function') showFacNotice('✉ Nova mensagem de um jogador.');
+});
+function playerSendMessage() {
+  const el = document.getElementById('player-msg-compose');
+  const text = el?.value.trim();
+  if (!text) return;
+  socket.emit('player_message', { text });
+  el.value = '';
+  flashError('Mensagem enviada ao facilitador.');
+}
+
 // Jogador: entrou com sucesso
 socket.on('join_success', ({ role, roomId }) => {
   myRole = role;

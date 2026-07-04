@@ -919,3 +919,21 @@ textarea.fac-input { resize: vertical; min-height: 36px; }
   #game-canvas { max-width: 100%; height: auto; }
   .header-meta { flex-wrap: wrap; gap: 0.4rem; }
 }
+
+/* ─── Editor estruturado de armas/capacidades (formulário de unidade) ───────── */
+.fum-editor { display: flex; flex-direction: column; gap: 4px; }
+.fum-row { display: flex; gap: 4px; align-items: center; }
+.fum-row select.fac-input { flex: 2 1 0; min-width: 0; }
+.fum-row input.fac-input { flex: 1 1 0; min-width: 0; width: auto; }
+.fum-row .fac-small-btn { flex: 0 0 auto; }
+
+/* ─── Timer de turno + mensagem ao facilitador ──────────────────────────────── */
+.turn-timer-display {
+  font-family: 'Courier New', monospace; font-weight: bold; font-size: 0.9rem;
+  padding: 2px 10px; border-radius: 4px; background: rgba(10,46,85,0.7);
+  border: 1px solid #2b6ca3; color: #cfe6ff;
+}
+.turn-timer-display.urgent { background: rgba(140,30,30,0.8); border-color: #e05a5a; color: #ffdede; }
+.msg-fac-panel { display: flex; flex-direction: column; gap: 5px; }
+.msg-fac-panel textarea.fac-input { width: 100%; resize: vertical; }
+.fac-msg-incoming { border-left: 3px solid #4a90d9; padding-left: 6px; }
