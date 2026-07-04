@@ -146,3 +146,102 @@ Testes adicionais cobrindo o novo comportamento estão em
 seeds, `E[actualLoss] ≈ expectedLoss`) e
 `shared/tests/game_engine_rng.test.js` (wiring de `state.rng` via
 `newGame`/`resolveQueuedEngagement`).
+
+## 6. Resolução simultânea de combate (correções metodológicas P0)
+
+Três correções alinham a resolução de combate à semântica da equação de salva
+que o motor (`shared/salvo_engine/dynamics.js`) já implementa, removendo vieses
+sistemáticos que afetavam todas as métricas do estudo. Todas foram validadas
+por testes (`shared/tests/combat_simultaneity.test.js`) e end-to-end pelo
+`batch_runner`.
+
+### 6.1 Simultaneidade (fim do primeiro-ataque pró-Azul)
+
+**Antes**: `resolveCombatQueue` percorria a fila `[...blueAtaques,
+...vermelhoAtaques]` aplicando dano a `defender.hp` imediatamente. Como o Azul
+é sempre enfileirado primeiro (`buildCombatQueue`), um ataque azul que destruía
+uma unidade vermelha **cancelava o ataque de retorno já declarado** por ela no
+mesmo turno (o engajamento cancelava-se porque o atacante passava a ter
+`hp <= 0`). Isso dava ao Azul — o lado cujas capacidades o estudo varia — um
+primeiro golpe grátis, enviesando E1_atrito, atrito_azul, E2 e E3.
+
+**Depois**: nenhum HP muda até que **toda** a fila seja resolvida. Toda unidade
+viva no início da fase dispara; o dano incidente é somado por defensor e
+aplicado de uma só vez ao final. Uma unidade destruída neste turno ainda
+entrega seu fogo declarado — como na troca simultânea de salvas.
+
+Efeito medido (condição C0, 50 réplicas pareadas, sementes 5001-5050):
+atrito Vermelho 66,58 → 65,62 (Δ −0,96); atrito Azul 69,36 → 70,88 (Δ +1,52) —
+exatamente a direção esperada ao remover o golpe grátis do Azul.
+
+### 6.2 Clip agregado de overkill (modos determinístico × estocástico)
+
+**Antes**: cada engajamento aplicava `min(rawKernel, hp)` isoladamente. Com o
+`min` por engajamento, `E[min(amostrado, hp)] ≤ min(E[amostrado], hp)` sempre
+que o alvo pudesse ser sobre-destruído (unidades de SP baixo, comum). O modo
+estocástico ficava enviesado para baixo frente ao determinístico, e os dois
+datasets **não eram intercambiáveis**.
+
+**Depois**: o dano incidente é somado por defensor e clipado **uma única vez**
+no agregado, `min(Σ incidente, SP_início_de_fase)` — a mesma semântica
+"agrega-antes-do-max" da equação de salva (`dynamics.js`). O dano aplicado é
+então atribuído proporcionalmente a cada engajamento (`Σ actualLoss ==
+aplicado`) para exibição/log. Isso elimina o viés de overkill *por engajamento*.
+
+Resíduo (documentado, não corrigível sem alterar o modelo): permanece uma
+pequena discrepância determinístico-vs-estocástico apenas nas **fronteiras** —
+o piso `leakers = max(0, launched − intercepted)` introduz viés para cima e o
+teto de SP introduz viés para baixo; no interior (sem saturação de
+interceptação, sem overkill) os dois modos coincidem em esperança.
+**Recomendação**: para um dado dataset, use **um único modo** de forma
+consistente (todo determinístico ou todo estocástico); não misture nem compare
+diretamente réplicas determinísticas com estocásticas.
+
+### 6.3 Saturação da bateria de interceptação
+
+**Antes**: `airDefense`/`bmd` são não-expendíveis e cada atacante era resolvido
+em engajamento separado usando `min(launched, defQty)` — de modo que N
+atacantes no mesmo turno enfrentavam, cada um, a bateria defensiva **completa e
+renovada**. A defesa era efetivamente multiplicada pelo número de atacantes,
+invertendo a dinâmica de saturação que a equação de salva existe para capturar.
+
+**Depois**: a capacidade de interceptação é um **pool compartilhado por
+defensor e por fase** (`interceptBudget`). O primeiro salvo consome
+`min(launched, remaining)` interceptores e decrementa o pool; salvos seguintes
+enfrentam apenas o que restou. Ataques concentrados podem, assim, saturar a
+defesa. O pool não deplete o estoque entre turnos (defesas AA são reutilizáveis
+turno a turno); apenas satura dentro de uma mesma troca de salvas. Sem pool
+(chamada direta a `resolveEngagement`), o comportamento legado — bateria cheia —
+é preservado, mantendo a suíte de testes de engajamento único verde.
+
+### 6.4 Retrocompatibilidade
+
+`interceptBudget` e `applyDamage` são parâmetros **opcionais** de
+`resolveEngagement` (padrões: sem pool, aplica dano imediatamente), e
+`resolveQueuedEngagement(state, engagement)` chamado com dois argumentos
+mantém o modo de aplicação imediata. Assim, o multiplayer interativo
+(`server.js`, que chama `resolveCombatQueue`) passa a usar o modo simultâneo,
+enquanto todos os testes existentes (57, incluindo os de chamada direta)
+permanecem verdes.
+
+## 7. Advertência estatística: Common Random Numbers (CRN) entre condições
+
+`tools/conditions.js` **reutiliza o mesmo conjunto de sementes em todas as
+condições** (fatorial 7001-7020; ablação 5001-5050). Isso é uma técnica
+deliberada de redução de variância (CRN): comparar condições no mesmo índice de
+réplica cancela a variação da "sorte" comum e aumenta o poder para detectar o
+efeito das capacidades.
+
+**Consequência**: as réplicas de índice igual **não são independentes** entre
+condições — são positivamente correlacionadas. As análises que assumem amostras
+independentes (teste t de duas amostras, Mann-Whitney, ANOVA entre-sujeitos)
+ficam **mal especificadas** se aplicadas diretamente.
+
+**Recomendação**: trate a semente como bloco e use métodos **pareados/blocados**
+— teste t pareado ou Wilcoxon de postos com sinais (duas condições), ANOVA de
+medidas repetidas / modelo misto com a semente como efeito aleatório (várias
+condições), e Cohen's dz (não d) para tamanho de efeito. Alternativamente, para
+usar métodos independentes, gere sementes **disjuntas** por condição em
+`conditions.js` (sacrificando a redução de variância do CRN). O repositório não
+executa a análise; qualquer script downstream deve declarar explicitamente qual
+das duas rotas adota.

@@ -272,9 +272,19 @@ function buildCombatQueue(state) {
   }).filter(Boolean);
 }
 
-// Resolves a single declared engagement with one salvo-equation pulse and
-// logs the outcome. Mutates engagement.status/result and defender.hp.
-function resolveQueuedEngagement(state, engagement) {
+// Resolves a single declared engagement with one salvo-equation pulse.
+//
+// `ctx` (optional) switches between two modes:
+//   - absent  → immediate mode: the loss is written to defender.hp right away
+//               and the outcome logged (used by single-engagement callers and
+//               the direct-call test suite; behaviour unchanged).
+//   - present → simultaneous mode (see resolveCombatQueue): HP is NOT mutated
+//               here. The uncapped incoming fire is accumulated per defender
+//               via ctx.addLoss and applied once, after the whole phase, so no
+//               shooter is cancelled by damage it takes in the same phase and
+//               overkill is clipped at the aggregate. `ctx.budgetFor(defId)`
+//               supplies the shared interceptor pool for battery saturation.
+function resolveQueuedEngagement(state, engagement, ctx = null) {
   const att = state.units.find(u => u.id === engagement.attackerId && u.hp > 0);
   const def = state.units.find(u => u.id === engagement.targetId && u.hp > 0);
   if (!att || !def) {
@@ -295,31 +305,109 @@ function resolveQueuedEngagement(state, engagement) {
     attacker: att, defender: def, weaponType: engagement.weaponType,
     amount: engagement.amount, distance: dist, defenderDisabled: isFuelDisabled(def),
     rng: state.rng || undefined,
+    interceptBudget: ctx ? ctx.budgetFor(def.id) : null,
+    applyDamage: !ctx,
   });
+  engagement.status = 'ended';
+  engagement.result = eng;
 
   if (!eng.ok) {
     state.log.unshift(`⚠ ${att.name} → ${def.name}: ${eng.reason}`);
+    return;
+  }
+  spendEngagementFuel(att);
+
+  if (ctx) {
+    // Simultaneous mode: bank the uncapped incoming fire; the final HP,
+    // destruction flag, per-engagement attribution and defender fuel are
+    // resolved once, after the whole queue, in resolveCombatQueue.
+    const raw = state.rng ? (eng.stochastic ? eng.stochastic.sampledLoss : eng.actualLoss) : eng.rawKernel;
+    ctx.addLoss(engagement, def.id, Math.max(0, raw));
+    return;
+  }
+
+  // Immediate mode: apply + log this engagement in isolation (unchanged).
+  const interceptStr = eng.interception.pDefenseTotal > 0
+    ? ` (interceptação −${eng.interception.pDefenseTotal.toFixed(2)})` : '';
+  if (eng.destroyed) {
+    state.log.unshift(`💥 ${def.name} DESTRUÍDO por ${att.name} [${eng.weaponLabel}]`);
+  } else if (eng.actualLoss > 1e-3) {
+    state.log.unshift(`✓ ${att.name} → ${def.name} −${eng.actualLoss.toFixed(2)}SP [${eng.weaponLabel}${interceptStr}]`);
+    spendDamageFuel(def);
   } else {
-    spendEngagementFuel(att);
-    const interceptStr = eng.interception.pDefenseTotal > 0
-      ? ` (interceptação −${eng.interception.pDefenseTotal.toFixed(2)})` : '';
-    if (eng.destroyed) {
-      state.log.unshift(`💥 ${def.name} DESTRUÍDO por ${att.name} [${eng.weaponLabel}]`);
-    } else if (eng.actualLoss > 1e-3) {
-      state.log.unshift(`✓ ${att.name} → ${def.name} −${eng.actualLoss.toFixed(2)}SP [${eng.weaponLabel}${interceptStr}]`);
-      spendDamageFuel(def);
-    } else {
-      state.log.unshift(`✗ ${att.name} → ${def.name} sem efeito [${eng.weaponLabel}${interceptStr}]`);
+    state.log.unshift(`✗ ${att.name} → ${def.name} sem efeito [${eng.weaponLabel}${interceptStr}]`);
+  }
+  if (state.log.length > 80) state.log = state.log.slice(0, 80);
+}
+
+/**
+ * Resolves the whole combat phase as one *simultaneous* salvo exchange
+ * (mutates state, no I/O).
+ *
+ * Rationale: the salvo equation is simultaneous — both sides read start-of-
+ * phase strengths, then both apply losses (shared/salvo_engine/dynamics.js).
+ * Resolving engagement-by-engagement with immediate HP mutation instead gave
+ * whoever fired first (Blue, always enqueued first by buildCombatQueue) a free
+ * first strike: a Blue kill would cancel the dead unit's already-declared
+ * return fire. That systematically biased every PBC metric toward Blue.
+ *
+ * Here no HP changes until the entire queue is resolved: every unit alive at
+ * the start of the phase fires, interceptors are a shared per-defender pool
+ * (battery saturation), incoming fire is summed per defender, and the total is
+ * clipped once at start-of-phase strength (aggregate clip = the salvo model's
+ * own aggregate-before-max semantics, and it removes the per-engagement
+ * overkill bias between the deterministic and stochastic modes). Each
+ * engagement's result is then back-filled with its proportional share of the
+ * applied loss and the defender's true final HP, for display/logging.
+ */
+function resolveCombatQueue(state) {
+  const preHp = new Map(state.units.map(u => [u.id, u.hp]));
+  const budgets = new Map();     // defenderId -> Map(weaponType -> remaining interceptor shots)
+  const contrib = new Map();     // engagement -> its uncapped raw contribution
+  const lossByDef = new Map();   // defenderId -> total uncapped incoming
+  const ctx = {
+    budgetFor(defId) {
+      if (!budgets.has(defId)) budgets.set(defId, new Map());
+      return budgets.get(defId);
+    },
+    addLoss(engagement, defId, raw) {
+      contrib.set(engagement, raw);
+      lossByDef.set(defId, (lossByDef.get(defId) || 0) + raw);
+    },
+  };
+
+  for (const engagement of state.combatQueue) resolveQueuedEngagement(state, engagement, ctx);
+
+  // Apply all incoming fire simultaneously, clipping each defender once.
+  for (const [defId, rawTotal] of lossByDef) {
+    const def = state.units.find(u => u.id === defId);
+    if (!def) continue;
+    const cap = preHp.has(defId) ? preHp.get(defId) : def.hp;
+    const applied = Math.min(rawTotal, cap);
+    const scale = rawTotal > 1e-12 ? applied / rawTotal : 0;
+    def.hp = Math.max(0, cap - applied);
+    const destroyed = def.hp <= 1e-9;
+
+    // Back-fill each contributing engagement with its share of the applied
+    // loss and the defender's final state (so the salvo model's aggregate
+    // clip is reflected honestly per engagement, Σ share == applied).
+    for (const engagement of state.combatQueue) {
+      if (engagement.targetId !== defId) continue;
+      const r = engagement.result;
+      if (!r || !r.ok) continue;
+      r.actualLoss = (contrib.get(engagement) || 0) * scale;
+      r.remainingHp = def.hp;
+      r.destroyed = destroyed;
+    }
+
+    if (applied > 1e-3) spendDamageFuel(def);
+    if (destroyed) {
+      state.log.unshift(`💥 ${def.name} DESTRUÍDO (fogo simultâneo −${applied.toFixed(2)}SP)`);
+    } else if (applied > 1e-3) {
+      state.log.unshift(`✓ ${def.name} −${applied.toFixed(2)}SP (fogo simultâneo)`);
     }
   }
   if (state.log.length > 80) state.log = state.log.slice(0, 80);
-  engagement.status = 'ended';
-  engagement.result = eng;
-}
-
-/** Resolves every pending engagement in state.combatQueue (mutates state, no I/O). */
-function resolveCombatQueue(state) {
-  for (const engagement of state.combatQueue) resolveQueuedEngagement(state, engagement);
 }
 
 /** Ends the combat phase: checks for a winner, else moves to combat_approval. Returns {winner}. */

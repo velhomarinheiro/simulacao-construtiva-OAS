@@ -98,9 +98,16 @@ function rollDamageTable(table, rng) {
  * Aggregate expected damage prevented by all of the defender's weapons
  * eligible to intercept `incomingProfile`.
  *
+ * @param {Map} [interceptBudget]  optional per-defender, per-phase pool of
+ *   remaining interceptor shots (keyed by defender weaponType). When given,
+ *   each interceptor fires `min(launched, remaining)` shots and the pool is
+ *   decremented — so several attackers in the same phase *share* (saturate)
+ *   the defender's battery instead of each facing the full magazine. When
+ *   absent, every call sees the full `defQty` (legacy single-engagement
+ *   behaviour, relied on by the direct-call test suite).
  * @returns {{pDefenseTotal: number, details: object[]}}
  */
-function resolveInterceptionExpectation({ defender, incomingProfile, launched, pOffense, defenderDisabled }) {
+function resolveInterceptionExpectation({ defender, incomingProfile, launched, pOffense, defenderDisabled, interceptBudget = null }) {
   const details = [];
   if (defenderDisabled || launched <= 0 || !incomingProfile.interceptableBy?.length) {
     return { pDefenseTotal: 0, details };
@@ -114,8 +121,16 @@ function resolveInterceptionExpectation({ defender, incomingProfile, launched, p
     const defProfile = COMBAT_CONFIG.weaponProfiles?.[defWeapon];
     if (!defProfile) continue;
 
+    // Remaining interception capacity for this weapon this phase. Without a
+    // shared budget the full magazine is available to every engagement.
+    const remaining = interceptBudget
+      ? (interceptBudget.has(defWeapon) ? interceptBudget.get(defWeapon) : defQty)
+      : defQty;
+    if (remaining <= 0) continue;
+
     const pIntercept = expectedShotValue(defProfile.damageProfile, 'missile');
-    const shots = Math.min(launched, defQty);
+    const shots = Math.min(launched, remaining);
+    if (interceptBudget) interceptBudget.set(defWeapon, remaining - shots);
     const expectedIntercepted = pIntercept * shots;
     pDefenseTotal += expectedIntercepted * pOffense;
     details.push({ weapon: defWeapon, shots, pIntercept, expectedIntercepted });
@@ -135,9 +150,18 @@ function resolveInterceptionExpectation({ defender, incomingProfile, launched, p
  * @param {() => number} [rng]  seeded PRNG (shared/rng.js#mulberry32); when
  *   given, `actualLoss` is sampled per-shot instead of equal to
  *   `expectedLoss`, and is what gets applied to `defender.hp`.
+ * @param {Map} [interceptBudget]  shared per-defender interceptor pool for the
+ *   current phase (see resolveInterceptionExpectation). Enables battery
+ *   saturation across simultaneous attackers.
+ * @param {boolean} [applyDamage]  when true (default) the loss is written to
+ *   `defender.hp` immediately (legacy single-engagement behaviour). When
+ *   false, `defender.hp` is left untouched and the caller applies the loss —
+ *   used by resolveCombatQueue to resolve a whole phase simultaneously and
+ *   clip overkill once at the aggregate. `rawKernel` (uncapped expected) and
+ *   `stochastic.sampledLoss` (uncapped sampled) are always returned for that.
  * @returns {object} EngagementResult
  */
-function resolveEngagement({ attacker, defender, weaponType, amount, distance, defenderDisabled = false, rng = null }) {
+function resolveEngagement({ attacker, defender, weaponType, amount, distance, defenderDisabled = false, rng = null, interceptBudget = null, applyDamage = true }) {
   const profile = COMBAT_CONFIG.weaponProfiles?.[weaponType];
   if (!profile) return { ok: false, reason: `Tipo de arma desconhecido: ${weaponType}` };
 
@@ -163,6 +187,7 @@ function resolveEngagement({ attacker, defender, weaponType, amount, distance, d
     launched,
     pOffense,
     defenderDisabled,
+    interceptBudget,
   });
 
   const attackerDomain = COMBAT_CONFIG.categoryToDomain[attacker.category] ?? COMBAT_CONFIG.categoryToDomain.surface;
@@ -207,7 +232,7 @@ function resolveEngagement({ attacker, defender, weaponType, amount, distance, d
   }
 
   const remainingHp = preHp - actualLoss;
-  defender.hp = remainingHp;
+  if (applyDamage) defender.hp = remainingHp;
   const destroyed = remainingHp <= DESTROYED_THRESHOLD;
 
   return {
