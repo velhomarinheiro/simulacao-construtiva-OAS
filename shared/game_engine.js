@@ -16,7 +16,7 @@
  */
 
 const { ORDER_OF_BATTLE } = require('./order_of_battle');
-const { COMBAT_CONFIG } = require('./combat_config');
+const { COMBAT_CONFIG, hasOffensiveMeans } = require('./combat_config');
 const { resolveEngagement, getWeaponQuantity, getWeaponRange } = require('./combat_engine');
 const {
   initializeFuel, isFuelDisabled,
@@ -156,6 +156,9 @@ function initialUnits(customOB) {
  *   stochastic engagement outcomes (variance between replicas of the same
  *   condition). Without a seed, `state.rng` is null and combat resolution
  *   stays fully deterministic (expected-value kernels only).
+ * @param {string} [options.reloadDoctrine]  which units recompletam munições
+ *   ao virar o turno: 'baseline' (assimétrico, padrão) or 'symmetric' (regras
+ *   do Azul aplicadas a ambos os lados). See RELOAD_DOCTRINES.
  */
 function newGame(customOB, options = {}) {
   const state = {
@@ -169,6 +172,7 @@ function newGame(customOB, options = {}) {
     movementSnapshot: {},
     combatQueue: [],
     rng: options.seed != null ? mulberry32(options.seed) : null,
+    reloadDoctrine: options.reloadDoctrine || 'baseline',
   };
   saveMovementSnapshot(state);
   markRefuelEligibility(state);
@@ -251,6 +255,47 @@ function applyMovementApproval(state, overrides) {
 
 // ─── Combat system (resolução em pulso único pela equação de salva) ──────────
 const SALVO_SIZE = { ascm: 2, mss: 2, torpedo: 1, lacm: 1, asbm: 1 };
+
+// ─── Reload doctrine ────────────────────────────────────────────────────────
+// Which units recompletam munições ao virar o turno. This is a *scenario
+// assumption* (supply lines, at-sea replenishment) rather than a physical law,
+// so it is a named, swappable parameter (state.reloadDoctrine, set at newGame)
+// instead of being hardcoded. Each doctrine is `(unit, ctx) => boolean`, where
+// ctx.portHexes[team] is a Set of "col,row" of that team's living port hexes.
+//
+//   baseline  — the historical asymmetric doctrine: Blue land always reloads,
+//               Blue air at a base/carrier, Blue surface/sub only stationary on
+//               a Blue port; Red only reloads air (surface/sub never). Default.
+//   symmetric — the same Blue ruleset applied to BOTH sides (Red surface/sub
+//               then reload when stationary on a Red-owned port hex; if the OB
+//               has no Red ports, Red naval simply never reloads, transparently).
+const RELOAD_DOCTRINES = {
+  baseline(unit, ctx) {
+    const key = `${unit.col},${unit.row}`;
+    if (unit.team === 'blue') {
+      if (unit.category === 'land') return true;
+      if (unit.category === 'air') return unit.fuel?.wasAtRefuelLocation === true;
+      if (!unit.moved && (unit.category === 'surface' || unit.category === 'submarine')) return ctx.portHexes.blue.has(key);
+      return false;
+    }
+    if (unit.team === 'red') {
+      if (unit.category === 'air') return unit.fuel?.wasAtRefuelLocation === true;
+      return false;
+    }
+    return false;
+  },
+  symmetric(unit, ctx) {
+    const team = unit.team;
+    if (team !== 'blue' && team !== 'red') return false;
+    if (unit.category === 'land') return true;
+    if (unit.category === 'air') return unit.fuel?.wasAtRefuelLocation === true;
+    if (!unit.moved && (unit.category === 'surface' || unit.category === 'submarine')) return ctx.portHexes[team].has(`${unit.col},${unit.row}`);
+    return false;
+  },
+};
+function portHexSet(state, team) {
+  return new Set(state.units.filter(u => u.team === team && u.hp > 0 && u.type === 'porto').map(u => `${u.col},${u.row}`));
+}
 
 function buildCombatQueue(state) {
   const all = [...(state.blueAttacks || []), ...(state.redAttacks || [])];
@@ -451,32 +496,26 @@ function applyCombatApproval(state, hpChanges) {
 /**
  * Determines the game winner, if any.
  *
- * A side loses if no surviving unit retains any offensive means
- * (attackRange, weapon stock, or offensive capability) -- i.e. its forces
- * have been rendered combat-ineffective in general. No single unit (e.g.
- * the Red carrier strike group) is special-cased.
+ * A side loses when no surviving unit retains any *offensive* means (a weapon
+ * with stock, or an offensive capability — see combat_config.hasOffensiveMeans;
+ * pure interceptors like airDefense/bmd do NOT count, and the static
+ * `attackRange` table is deliberately ignored). I.e. its forces can no longer
+ * inflict attrition. No single unit (e.g. the Red carrier strike group) is
+ * special-cased.
  */
 function checkWinner(state) {
-  const hasOffense = u => Object.values(u.attackRange || {}).some(v => v > 0) || Object.values(u.weapons || {}).some(w => w.quantity > 0) || Object.values(u.capabilities || {}).some(v => v > 0);
-  const b = state.units.some(u => u.team === 'blue' && u.hp > 0 && hasOffense(u));
-  const r = state.units.some(u => u.team === 'red' && u.hp > 0 && hasOffense(u));
+  const b = state.units.some(u => u.team === 'blue' && u.hp > 0 && hasOffensiveMeans(u));
+  const r = state.units.some(u => u.team === 'red' && u.hp > 0 && hasOffensiveMeans(u));
   if (!b) return 'red'; if (!r) return 'blue'; return null;
 }
 
 function nextTurn(state) {
-  const portHexes = new Set(state.units.filter(u => u.team === 'blue' && u.hp > 0 && u.type === 'porto').map(u => `${u.col},${u.row}`));
+  const doctrine = RELOAD_DOCTRINES[state.reloadDoctrine] || RELOAD_DOCTRINES.baseline;
+  const ctx = { portHexes: { blue: portHexSet(state, 'blue'), red: portHexSet(state, 'red') } };
   for (const u of state.units) {
     if (u.hp <= 0) continue;
     if (!u.initWeapons || Object.keys(u.initWeapons).length === 0) continue;
-    const hexKey = `${u.col},${u.row}`;
-    let reload = false;
-    if (u.team === 'blue') {
-      if (u.category === 'land') reload = true;
-      else if (u.category === 'air') reload = u.fuel?.wasAtRefuelLocation === true;
-      else if (!u.moved && (u.category === 'surface' || u.category === 'submarine')) reload = portHexes.has(hexKey);
-    } else if (u.team === 'red') {
-      if (u.category === 'air') reload = u.fuel?.wasAtRefuelLocation === true;
-    }
+    const reload = doctrine(u, ctx);
     if (reload) {
       const restored = [];
       for (const [wpn, init] of Object.entries(u.initWeapons)) {
@@ -512,5 +551,5 @@ module.exports = {
   validateMoves, applyMoves, finalizeMovementPhase, applyMovementApproval,
   SALVO_SIZE, buildCombatQueue, resolveQueuedEngagement, resolveCombatQueue,
   finishCombatPhase, applyCombatApproval,
-  checkWinner, nextTurn,
+  checkWinner, nextTurn, RELOAD_DOCTRINES,
 };

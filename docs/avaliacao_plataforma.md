@@ -93,26 +93,34 @@ amostras, ANOVA entre-sujeitos) ficam mal especificadas. Documentado em
 pareado / Wilcoxon, ANOVA de medidas repetidas, Cohen's dz) **ou** sementes
 disjuntas por condição.
 
-### A.5 Questões metodológicas remanescentes (não-P0)
+### A.5 Refinamentos de rigor — [CORRIGIDOS P1]
 
-- **Maquinário do salvo_engine parcialmente inerte**: o engajamento 1-vs-1 ainda
-  força `stayingPower = 1` e admissibilidade toda-1; a matriz χ 5×5 e o targeting
-  σ não são exercitados na resolução do jogo. O combate efetivo permanece
-  `pOffense·tiros − pDefense`. Ativar staying power e admissibilidade reais é P1.
-- **Bots determinísticos**: nenhum módulo de `shared/bot/` consome `state.rng`
-  (contrariando `rng.js:14`); a única fonte de variância é a amostragem de dano.
-  A variância entre réplicas é estruturalmente estreita. Ruído decisório opcional
-  via `state.rng` é P1.
-- **Métricas-proxy**: `E1_kcv` conta capacidade defensiva (airDefense/bmd/asw)
-  como "ofensa" no predicado de vitória (`game_engine.js#checkWinner`);
-  `E3_culminancia` soma munições com inteiros de capacidade sem pesos e, como
-  o Vermelho de superfície nunca recarrega, mede sobretudo gasto de mísseis. São
-  proxies auto-declarados; refino e ponderação são P1.
-- **Recarga assimétrica hardcoded** (Azul recarrega amplamente; superfície/
-  submarino Vermelho nunca) — suposição doutrinária de grande efeito, deveria
-  ser parâmetro de cenário declarado (P1).
-- **Lacunas de teste**: `metrics.js` e o `batch_runner` fim-a-fim seguem sem
-  teste; sem validação estatística dos datasets (P1).
+- **Predicado de meios ofensivos** (`E1_kcv`/vitória): `hasOffensiveMeans`
+  (`combat_config.js`) passou a exigir arma com estoque ou capacidade ofensiva —
+  interceptadores puros (airDefense/bmd) e a tabela `attackRange` não contam. Fonte
+  única usada por `checkWinner` e `redForceCombatIneffective`. `E1_kcv` voltou a
+  discriminar (4/20 réplicas em C0; vitórias decididas em vez de censuradas).
+- **E3 ponderado**: `offensiveStock` pondera cada arma/capacidade pelo dano
+  esperado (`weaponOffensiveWeight`), medindo potencial de combate, não contagem.
+- **Doutrina de recarga parametrizada**: `state.reloadDoctrine` (`baseline` padrão
+  | `symmetric`); a suposição virou parâmetro de cenário declarado.
+- **Ruído decisório dos bots**: jitter simétrico (média 1) no argmax de alvo e de
+  atribuição, condicionado a `state.rng`; amplia trajetórias entre réplicas sem
+  viés. Sem semente → determinístico.
+- **Cobertura de testes**: `metrics.test.js` e `game_engine_p1.test.js` (métricas,
+  doutrina, ruído e pipeline fim-a-fim); suíte total 70 verdes.
+
+**P1.1 reavaliado e descartado (seria incorreto)**: "ativar staying power e
+admissibilidade χ reais" foi analisado e **não** implementado — as tabelas d6 já
+expressam dano em pontos absolutos de staying power e a efetividade cruzada de
+domínio já está nas `SALVO_KERNELS` por par (arma, alvo); `stayingPower = 1` e χ
+permissivo são a ponte **correta**, e alterá-los contaria os efeitos duas vezes,
+quebrando as médias calibradas. Detalhe em `pbc_capacidades.md §8.5` e em
+comentário em `combat_engine.js`. O maquinário χ/staying-power só se aplicaria a
+uma resolução força-contra-força em pulso único (redesenho, não ajuste).
+
+> ⚠️ Os datasets `output/coleta_*.csv` foram gerados antes das correções P0/P1 e
+> devem ser **regenerados** antes de análise (`pbc_capacidades.md §8.6`).
 
 ---
 
@@ -179,24 +187,22 @@ disjuntas por condição.
 
 ## C. Roteiro priorizado remanescente
 
-**P1 — rigor e método**
-1. Ativar staying power e admissibilidade χ reais no engajamento (remover o
-   `stayingPower=1` forçado; usar a matriz canônica em vez da permissiva).
-2. Ruído decisório opcional nos bots consumindo `state.rng` (desempate
-   estocástico de alvos/rotas) para ampliar o espaço de trajetórias.
-3. Corrigir o predicado de `E1_kcv`/vitória (separar meios ofensivos de
-   defensivos) e ponderar a `E3`; parametrizar a doutrina de recarga.
-4. Teste fim-a-fim do `batch_runner` + `metrics.js`.
+**P0 — validade do estudo** — ✅ concluído (§A.1-A.4, `pbc_capacidades.md §6-7`).
 
-**P2 — plataforma, dados e jogabilidade**
-5. Persistência (SQLite ou snapshot JSON) + reconexão com grace period e
+**P1 — rigor e método** — ✅ concluído (§A.5, `pbc_capacidades.md §8`); o item
+"staying power/admissibilidade" foi reavaliado e descartado por ser incorreto.
+
+**P2 — plataforma, dados e jogabilidade** (pendente)
+1. Persistência (SQLite ou snapshot JSON) + reconexão com grace period e
    failover automático para bot; não deletar a sala na queda do facilitador.
-6. AAR estruturado: registro por engajamento (JSON/CSV) e relatório imprimível;
+2. AAR estruturado: registro por engajamento (JSON/CSV) e relatório imprimível;
    log sem truncamento.
-7. Formulário de unidade substituindo prompts/JSON cru; validação de schema da
+3. Formulário de unidade substituindo prompts/JSON cru; validação de schema da
    OB no servidor; parser CSV multilinha e distinção `0` vs vazio.
-8. Lote assíncrono (worker) com progresso; timer de turno opcional;
+4. Lote assíncrono (worker) com progresso; timer de turno opcional;
    responsividade e eventos touch básicos.
+5. Regenerar `output/coleta_*.csv` com o motor corrigido antes de qualquer
+   análise estatística (aplicando a orientação de CRN da §7).
 
 ---
 

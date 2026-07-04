@@ -19,7 +19,7 @@
 
 const { hexDist } = require('../hexgrid');
 const { computeReferenceScales, attackScore } = require('./capability_eval');
-const { planCOA, obFromState } = require('./coa_planner');
+const { planCOA, obFromState, decisionJitter } = require('./coa_planner');
 const { planMoveTowards } = require('./pathfinding');
 
 // Mirrors fuel_model.js's isFuelDisabled: naval units at 0 fuel can't move, attack or defend.
@@ -54,6 +54,7 @@ function decideAttacks(state, team) {
   const scales = computeReferenceScales(obFromState(state));
   const mine = state.units.filter(u => u.team === team && u.hp > 0 && !isFuelDisabled(u));
   const enemies = state.units.filter(u => u.team !== team && u.team !== 'neutral' && u.hp > 0 && u.detected);
+  const rng = typeof state.rng === 'function' ? state.rng : null;
 
   const attacks = [];
   for (const u of mine) {
@@ -61,7 +62,12 @@ function decideAttacks(state, team) {
     for (const enemy of enemies) {
       const dist = hexDist(u.col, u.row, enemy.col, enemy.row);
       const score = attackScore(u, enemy, dist, scales);
-      if (score > 0 && (!best || score > best.score)) best = { enemy, score };
+      if (score <= 0) continue;
+      // Symmetric multiplicative jitter (mean 1) breaks near-ties stochastically
+      // when a seed is present, so replicas diverge in target choice without
+      // shifting expected behaviour. No seed -> jitter is 1 (fully deterministic).
+      const key = score * decisionJitter(rng);
+      if (!best || key > best.key) best = { enemy, key };
     }
     if (best) attacks.push({ attackerId: u.id, targetId: best.enemy.id });
   }

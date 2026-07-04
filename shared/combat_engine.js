@@ -52,6 +52,16 @@ const DESTROYED_THRESHOLD = 1e-9;
 
 // All cross-domain pairs admissible: weapon target/range validation already
 // gates which (attacker, defender) categories may engage at all.
+//
+// This is intentional, not a simplification to "fix". The SALVO_KERNELS already
+// encode cross-domain effectiveness per (weapon, targetCategory) pair — e.g.
+// airAttack is 1.333 vs surface but 0.917 vs air — so applying a marginal χ<1
+// on top would double-count the domain penalty already in the calibration. For
+// the same reason each UnitType below uses stayingPower=1: the d6 tables express
+// damage in absolute staying-power points (HP), so rawKernel is applied directly
+// to hp; dividing by a real staying power would count it twice. The salvo
+// engine's χ / staying-power machinery only applies to a force-vs-force single
+// pulse, not to these per-engagement 1-v-1 pulses. See docs/pbc_capacidades.md §8.5.
 const PERMISSIVE_ADMISSIBILITY = Admissibility.fromArray(
   Array.from({ length: 5 }, () => Array(5).fill(1.0))
 );

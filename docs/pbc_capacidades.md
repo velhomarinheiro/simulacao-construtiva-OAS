@@ -245,3 +245,94 @@ usar métodos independentes, gere sementes **disjuntas** por condição em
 `conditions.js` (sacrificando a redução de variância do CRN). O repositório não
 executa a análise; qualquer script downstream deve declarar explicitamente qual
 das duas rotas adota.
+
+## 8. Refinamentos de rigor (P1)
+
+Segundo lote de melhorias, sobre as correções de combate da §6. Cobertas por
+`shared/tests/metrics.test.js` e `shared/tests/game_engine_p1.test.js`
+(suíte total: 70 testes verdes) e verificadas end-to-end pelo `batch_runner`.
+
+### 8.1 Predicado de "meios ofensivos" (vitória decisiva / E1_kcv)
+
+**Antes**: `checkWinner` e `E1_kcv` consideravam um lado combativo se qualquer
+unidade viva tivesse `attackRange > 0` **ou** estoque de arma **ou** qualquer
+capacidade > 0. Como `attackRange` é uma tabela estática > 0 para quase toda
+unidade, o predicado só disparava quando **todas** as unidades eram afundadas —
+por isso `E1_kcv` era sempre 0 e as partidas terminavam "censuradas".
+
+**Depois** (`combat_config.hasOffensiveMeans`, fonte única usada por
+`game_engine.checkWinner` e `metrics.redForceCombatIneffective`): um lado retém
+meios ofensivos se tiver **uma arma com estoque > 0 ou uma capacidade ofensiva
+> 0**. Interceptadores puros (`airDefense`, `bmd`) e a tabela `attackRange` **não**
+contam; `asw`/`airAttack`/`navalGun` contam. Efeito medido (C0, 20 réplicas):
+`E1_kcv = 1` em 4/20 e 4 vitórias Azuis decididas — a métrica voltou a
+discriminar, em vez de ser constante.
+
+### 8.2 Estoque ofensivo ponderado (E3 culminância)
+
+`metrics.offensiveStock` deixou de somar contagens cruas (24 MSS + `airAttack:6`
+com peso igual) e passou a ponderar cada arma/capacidade ofensiva pelo **dano
+esperado** (`combat_config.weaponOffensiveWeight`, o pOffense máximo do perfil
+pelas `SALVO_KERNELS`), excluindo capacidades defensivas. A culminância (E3)
+passa a medir a queda do **potencial de combate** Vermelho a ≤50% do nível
+inicial, não o mero gasto de mísseis.
+
+### 8.3 Doutrina de recarga parametrizada
+
+A regra de recompletamento de munições ao virar o turno — antes hardcoded e
+assimétrica (Azul recarrega amplamente; superfície/submarino Vermelho nunca) —
+tornou-se um parâmetro nomeado `state.reloadDoctrine` (`newGame(ob, { reloadDoctrine })`),
+com `RELOAD_DOCTRINES` em `game_engine.js`:
+
+- `baseline` (padrão) — comportamento histórico, **inalterado**;
+- `symmetric` — as regras do Azul aplicadas a ambos os lados (Vermelho de
+  superfície/submarino recarrega parado em porto Vermelho).
+
+Assim a suposição doutrinária vira uma variável de cenário explícita e
+auditável, sem mudar o padrão.
+
+### 8.4 Ruído decisório do jogador digital (variância entre réplicas)
+
+Os bots eram totalmente determinísticos, então a única fonte de variância entre
+réplicas era a amostragem de dano — espaço de trajetórias estreito. Agora, quando
+`state.rng` é uma função (semente informada), a seleção de alvo
+(`decideAttacks`) e a atribuição unidade→tarefa (`planCOA`) recebem um **jitter
+multiplicativo simétrico de média 1** (`decisionJitter`, amplitude 0,2), e o
+avanço-para-contato dispersa a linha-alvo em ±1. Empates próximos passam a ser
+desfeitos de forma diferente entre réplicas, ampliando a diversidade de
+trajetórias (movimentos, engajamentos e resultados) **sem viés esperado**
+(`E[jitter] = 1`). Sem semente, o jitter é exatamente 1 — os bots permanecem
+determinísticos (multiplayer e modo determinístico intactos).
+
+### 8.5 Nota metodológica: staying power e admissibilidade **não** foram alterados
+
+O relatório inicial listou "ativar staying power e admissibilidade χ reais no
+engajamento" como um item P1. **Análise posterior concluiu que fazê-lo seria
+incorreto** e foi deliberadamente descartado:
+
+- As tabelas d6 (`D6_DAMAGE_TABLES`) já expressam dano em **pontos absolutos de
+  staying power** (ex.: um ASCM `'1d6'` remove 1-6 pontos), e HP = staying power.
+  O engajamento aplica `rawKernel` (pontos esperados) diretamente ao HP; usar
+  `stayingPower = s ≠ 1` dividiria o dano por `s`, **contando o poder de
+  permanência duas vezes** (uma na calibração, outra na divisão) e quebrando as
+  médias validadas pela suíte.
+- As `SALVO_KERNELS` já codificam a efetividade por par (arma, categoria-alvo)
+  — ex.: `airAttack` vale 1,333 vs surface e 0,917 vs air. Multiplicar por um χ
+  marginal (0,5) **duplicaria** a penalidade cruzada de domínio já embutida na
+  calibração.
+
+Ou seja, `stayingPower = 1` e a admissibilidade permissiva (toda-1) são a
+**ponte correta** entre o modelo de HP/dano do jogo de guerra e o núcleo da
+equação de salva — não um bug. O maquinário multidomínio completo (divisão por
+poder de permanência, χ, targeting σ) só faria sentido numa resolução
+**força-contra-força em pulso único** (uma fase de combate agregada em vez de
+engajamentos 1-vs-1 declarados), o que seria um redesenho, não um ajuste. Um
+comentário nesse sentido foi adicionado a `shared/combat_engine.js`.
+
+### 8.6 ⚠️ Datasets committados estão desatualizados
+
+`output/coleta_fatorial.csv` e `output/coleta_ablacao.csv` foram gerados **antes**
+das correções §6 (combate simultâneo) e §8 (métricas). Devem ser **regenerados**
+antes de qualquer análise (`node tools/batch_runner.js --bloco fatorial` /
+`--bloco ablacao`), lembrando da advertência de CRN da §7 para a etapa
+estatística.

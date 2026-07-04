@@ -189,6 +189,48 @@ const COMBAT_CONFIG = {
   categoryToDomain: CATEGORY_TO_DOMAIN,
 };
 
+// Capabilities that only *intercept* incoming fire (they cannot inflict
+// attrition on an enemy). A unit holding nothing but these has no offensive
+// means. `asw` (anti-submarine), `airAttack` and `navalGun` are offensive and
+// are NOT listed here.
+const DEFENSIVE_CAPABILITIES = new Set(['airDefense', 'bmd']);
+
+/**
+ * True if `unit` still retains any *offensive* means: at least one weapon with
+ * stock remaining, or an offensive capability (anything but a pure
+ * interceptor). Used as the single source of truth for the decisive-victory /
+ * combat-ineffective test (game_engine.js#checkWinner,
+ * metrics.js#redForceCombatIneffective).
+ *
+ * Note: `attackRange` is deliberately NOT consulted — it is a static range
+ * table that is > 0 for almost every unit regardless of remaining armament, so
+ * including it made "combat-ineffective" trigger only when literally every unit
+ * was sunk. Offensive means = the ability to actually deal damage.
+ */
+function hasOffensiveMeans(unit) {
+  const weaponStock = Object.values(unit.weapons || {}).some(w => (w?.quantity || 0) > 0);
+  const offensiveCapability = Object.entries(unit.capabilities || {})
+    .some(([cap, v]) => (v || 0) > 0 && !DEFENSIVE_CAPABILITIES.has(cap));
+  return weaponStock || offensiveCapability;
+}
+
+/**
+ * Expected offensive output represented by one unit of `weaponType` in stock
+ * (or one point of an offensive capability of the same name), i.e. the max
+ * expected damage per shot across the weapon's valid target categories
+ * (`SALVO_KERNELS`). Used to weight the "offensive stock" that drives the Red
+ * culmination metric (metrics.js#offensiveStock), so a magazine of long-range
+ * ASCM counts for its combat potential rather than as one raw round each.
+ */
+function weaponOffensiveWeight(weaponType) {
+  const profile = weaponProfiles[weaponType];
+  if (!profile) return 0;
+  if (DEFENSIVE_CAPABILITIES.has(weaponType)) return 0;
+  const kernels = SALVO_KERNELS[profile.damageProfile] || {};
+  const vals = (profile.targets || []).map(cat => kernels[cat] || 0);
+  return vals.length ? Math.max(...vals) : 0;
+}
+
 module.exports = {
   CATEGORY_TO_DOMAIN,
   D6_DAMAGE_TABLES,
@@ -196,4 +238,7 @@ module.exports = {
   expectedValue,
   weaponProfiles,
   COMBAT_CONFIG,
+  DEFENSIVE_CAPABILITIES,
+  hasOffensiveMeans,
+  weaponOffensiveWeight,
 };

@@ -19,14 +19,24 @@
  */
 
 const { FPSO_UNIT_IDS, PORT_UNIT_IDS } = require('./capability_factors');
+const { hasOffensiveMeans, weaponOffensiveWeight, DEFENSIVE_CAPABILITIES } = require('./combat_config');
 
-/** Sum of every weapon quantity + offensive capability value for `team`'s living units. */
+/**
+ * Offensive stock of `team`'s living units, weighted by expected combat output
+ * (pOffense per round/point, via combat_config.weaponOffensiveWeight) rather
+ * than raw counts, and excluding purely defensive capabilities. So a magazine
+ * of long-range ASCM contributes its damage potential — not "one" per round —
+ * and interceptor batteries (airDefense/bmd) do not inflate the offensive
+ * total. Drives the Red culmination metric (E3).
+ */
 function offensiveStock(state, team) {
   let total = 0;
   for (const u of state.units) {
     if (u.team !== team || u.hp <= 0) continue;
-    for (const w of Object.values(u.weapons || {})) total += w.quantity || 0;
-    for (const v of Object.values(u.capabilities || {})) total += v > 0 ? v : 0;
+    for (const [wt, w] of Object.entries(u.weapons || {})) total += (w.quantity || 0) * weaponOffensiveWeight(wt);
+    for (const [cap, v] of Object.entries(u.capabilities || {})) {
+      if (v > 0 && !DEFENSIVE_CAPABILITIES.has(cap)) total += v * weaponOffensiveWeight(cap);
+    }
   }
   return total;
 }
@@ -42,15 +52,15 @@ function attrition(state, team) {
 }
 
 /**
- * 1 if Red's forces as a whole have been reduced to combat-ineffective
- * (no surviving Red unit retains any offensive means: attackRange, weapon
- * stock, or offensive capability), else 0. Mirrors the `!r` branch of
- * `game_engine.js#checkWinner` -- "decisive" is now defined by overall
- * reduction of Red's capability, not by the loss of any single unit.
+ * 1 if Red's forces as a whole have been reduced to combat-ineffective (no
+ * surviving Red unit retains any offensive means — a weapon with stock or an
+ * offensive capability; see combat_config.hasOffensiveMeans), else 0. Uses the
+ * exact predicate of `game_engine.js#checkWinner` (`!r` branch) — "decisive" is
+ * defined by overall reduction of Red's offensive capability, not by the loss
+ * of any single unit, and not by the always-on `attackRange` table.
  */
 function redForceCombatIneffective(state) {
-  const hasOffense = u => Object.values(u.attackRange || {}).some(v => v > 0) || Object.values(u.weapons || {}).some(w => w.quantity > 0) || Object.values(u.capabilities || {}).some(v => v > 0);
-  const r = state.units.some(u => u.team === 'red' && u.hp > 0 && hasOffense(u));
+  const r = state.units.some(u => u.team === 'red' && u.hp > 0 && hasOffensiveMeans(u));
   return r ? 0 : 1;
 }
 

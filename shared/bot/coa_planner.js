@@ -30,6 +30,22 @@ const { GRID_W, GRID_H, hexDist, getTerrain, canEnterTerrain, rangeAgainst } = r
 const { computeReferenceScales, unitOE, TASK_FOR_TARGET_CATEGORY } = require('./capability_eval');
 const { computeCPM } = require('./cpm');
 
+// Amplitude of the symmetric decision jitter used to break near-ties in the
+// digital player. Small enough that a clearly dominant choice still wins, large
+// enough that close calls diverge across replicas.
+const JITTER_AMOUNT = 0.2;
+
+/**
+ * Symmetric multiplicative jitter in [1 - JITTER_AMOUNT/2, 1 + JITTER_AMOUNT/2]
+ * with mean 1, drawn from the (seeded) game PRNG. Returns exactly 1 when no rng
+ * is supplied, keeping the bots fully deterministic in seedless (multiplayer /
+ * expected-value) mode. E[jitter] = 1, so it adds trajectory variance between
+ * replicas without biasing expected decisions.
+ */
+function decisionJitter(rng) {
+  return rng ? 1 + JITTER_AMOUNT * (rng() - 0.5) : 1;
+}
+
 /** Closest hex to `unit` that is within `range` of `target` and passable for `unit`. */
 function findApproachHex(unit, target, range) {
   if (hexDist(unit.col, unit.row, target.col, target.row) <= range) {
@@ -70,6 +86,7 @@ function planCOA(state, team) {
   const scales = computeReferenceScales(obFromState(state));
   const mine = state.units.filter(u => u.team === team && u.hp > 0);
   const enemies = state.units.filter(u => u.team !== team && u.team !== 'neutral' && u.hp > 0 && u.detected);
+  const rng = typeof state.rng === 'function' ? state.rng : null;
 
   const tasks = [];
   const assignments = [];
@@ -91,7 +108,10 @@ function planCOA(state, team) {
       const transitTurns = dist === 0 ? 0 : (u.movement > 0 ? Math.ceil(dist / u.movement) : Infinity);
       if (!isFinite(transitTurns)) continue;
       const oe = unitOE(u, taskType, scales);
-      if (!best || oe > best.oe) best = { unit: u, approach, transitTurns, oe };
+      // Jitter only the comparison key (not the reported oe) so near-equal units
+      // are sometimes swapped between replicas; deterministic without a seed.
+      const key = oe * decisionJitter(rng);
+      if (!best || key > best.key) best = { unit: u, approach, transitTurns, oe, key };
     }
     if (!best) continue;
 
@@ -107,14 +127,18 @@ function planCOA(state, team) {
   }
 
   // Advance-to-contact: with no detected enemies, push armed units toward the
-  // map's longitudinal center to extend sensor coverage.
+  // map's longitudinal center to extend sensor coverage. With a seed, disperse
+  // the target row by ±1 so the search pattern (and thus first contact) varies
+  // across replicas instead of every unit funnelling to its own row's center.
   if (enemies.length === 0) {
     for (const u of mine) {
       if (assigned.has(u.id)) continue;
       const hasOffense = Object.values(u.attackRange || {}).some(v => v > 0);
       if (!hasOffense || (u.movement || 0) === 0) continue;
-      const center = { col: GRID_W >> 1, row: u.row };
-      if (u.col === center.col) continue;
+      const rowJitter = rng ? Math.round((rng() - 0.5) * 2) : 0; // -1, 0 or +1
+      const targetRow = Math.max(0, Math.min(GRID_H - 1, u.row + rowJitter));
+      const center = { col: GRID_W >> 1, row: targetRow };
+      if (u.col === center.col && u.row === center.row) continue;
       assigned.add(u.id);
       tasks.push({ id: `RECON_${u.id}`, duration: 1, dependsOn: [] });
       assignments.push({ unitId: u.id, objectiveHex: center, taskId: `RECON_${u.id}`, targetUnitId: null, oe: 0, transitTurns: 0 });
@@ -125,4 +149,4 @@ function planCOA(state, team) {
   return { tasks, assignments, cpm, scales };
 }
 
-module.exports = { planCOA, findApproachHex, obFromState };
+module.exports = { planCOA, findApproachHex, obFromState, decisionJitter };
