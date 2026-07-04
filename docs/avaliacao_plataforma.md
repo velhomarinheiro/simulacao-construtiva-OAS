@@ -201,10 +201,18 @@ uma resolução força-contra-força em pulso único (redesenho, não ajuste).
 - **Mensagens do jogador**: jogadores iniciam mensagens ao facilitador
   (`player_message` + caixa de composição no sidebar), exibidas no log do
   facilitador.
+- **Persistência em disco** (`shared/persistence.js`): snapshot das salas em
+  JSON (autosave debounced + flush em SIGINT/SIGTERM, escrita atômica) e
+  restauração no boot — partidas em andamento **sobrevivem a reinício do
+  servidor**. O PRNG seedado agora expõe `.state` (contador serializável,
+  `mulberry32FromState`), então o fluxo estocástico **continua exatamente** de
+  onde parou. Sockets não são persistidos (efêmeros); clientes reassumem por
+  código (rejoin automático via `sessionStorage`). Snapshots com mais de 24 h
+  são descartados. Verificado por reinício real do servidor (sala e 57 unidades
+  restauradas, facilitador reassumiu).
 
-**P2 pendente** (menor): persistência em disco/DB (a resiliência atual é
-em-memória com failover, não sobrevive a reinício do servidor); tela de
-configuração do facilitador (editor de OB) permanece orientada a desktop.
+**P2 pendente** (menor): a tela de configuração do facilitador (editor de OB,
+tabela larga) permanece orientada a desktop — o jogo em si é responsivo.
 
 ---
 
@@ -236,13 +244,11 @@ lote assíncrono com progresso, parser CSV multilinha, AAR estruturado, toque +
 media query, datasets regenerados.
 
 **P2 residual concluído**: formulário de unidade estruturado, timer de turno,
-mensagens iniciadas pelo jogador e QA visual de responsividade/toque (§B.5).
+mensagens iniciadas pelo jogador, QA visual de responsividade/toque e
+**persistência em disco** (partidas sobrevivem a reinício do servidor) (§B.5).
 
-**Pendente (menor):**
-1. Persistência em disco/DB (a resiliência atual é em-memória com failover; não
-   sobrevive a reinício do servidor).
-2. Tela de configuração do facilitador (editor de OB, tabela larga) permanece
-   orientada a desktop — o jogo em si é responsivo.
+**Pendente (menor):** a tela de configuração do facilitador (editor de OB,
+tabela larga) permanece orientada a desktop — o jogo em si é responsivo.
 
 ---
 

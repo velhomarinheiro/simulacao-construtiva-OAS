@@ -10,6 +10,7 @@ const { before, after } = require('node:test');
 const { io: Client } = require('socket.io-client');
 
 const { server, rooms } = require('../../server.js');
+const P = require('../persistence');
 
 let port;
 const clients = [];
@@ -122,6 +123,28 @@ test('player can initiate a message to the facilitator', async () => {
   assert.equal(msg.from, 'blue');
   assert.equal(msg.to, 'facilitator');
   assert.match(msg.text, /reforço aéreo/);
+});
+
+test('a live server room survives a serialize/deserialize round-trip', async () => {
+  const fac = connect();
+  await ready(fac);
+  fac.emit('create_room');
+  const { roomId } = await once(fac, 'room_created');
+  fac.emit('start_game', { seed: 4242 }); // bots both sides -> game advances
+  await once(fac, 'game_start');
+  await tick(150);
+
+  const live = rooms.get(roomId);
+  assert.ok(live.state && live.state.units.length > 0);
+  const restored = P.deserializeRoom(JSON.parse(JSON.stringify(P.serializeRoom(live))));
+
+  assert.equal(restored.id, roomId);
+  assert.equal(restored.state.turn, live.state.turn);
+  assert.equal(restored.state.units.length, live.state.units.length);
+  assert.deepEqual(restored.state.units.map(u => u.hp), live.state.units.map(u => u.hp));
+  assert.deepEqual(restored.players, { blue: null, red: null, facilitator: null });
+  // seeded rng resumes at the same position
+  assert.equal(restored.state.rng(), live.state.rng());
 });
 
 test('turn timer: expiry makes the AI act for a stalling human team', async () => {

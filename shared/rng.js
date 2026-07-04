@@ -19,16 +19,32 @@
 
 /**
  * @param {number} seed  32-bit unsigned integer seed
- * @returns {() => number} function returning a float in [0, 1)
+ * @returns {() => number} function returning a float in [0, 1). The returned
+ *   function carries a `.state` property (the current internal counter, an
+ *   unsigned 32-bit int) so the generator can be snapshotted and resumed
+ *   across a process restart via mulberry32FromState — see shared/persistence.js.
  */
 function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
+  return mulberry32FromState(seed >>> 0);
+}
+
+/**
+ * Like mulberry32 but resumes from a previously-saved `.state` value, so the
+ * sequence continues exactly where it left off. mulberry32(seed) ===
+ * mulberry32FromState(seed) before any draw (backward compatible).
+ * @param {number} initialA  saved counter (unsigned 32-bit)
+ */
+function mulberry32FromState(initialA) {
+  let a = initialA >>> 0;
+  const fn = function () {
     a |= 0; a = (a + 0x6D2B79F5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    fn.state = a >>> 0;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+  fn.state = a >>> 0;
+  return fn;
 }
 
 /** Returns an integer in [min, max] (inclusive), drawn from `rng`. */
@@ -41,4 +57,4 @@ function pick(rng, arr) {
   return arr[randInt(rng, 0, arr.length - 1)];
 }
 
-module.exports = { mulberry32, randInt, pick };
+module.exports = { mulberry32, mulberry32FromState, randInt, pick };

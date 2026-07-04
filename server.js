@@ -15,6 +15,7 @@ const {
 const { decideMovement, decideAttacks } = require('./shared/bot/decision_engine');
 const { createCulminationTracker, computeFinalMetrics } = require('./shared/metrics');
 const { validateOB } = require('./shared/ob_io');
+const persistence = require('./shared/persistence');
 
 const PORT   = process.env.PORT || 3000;
 const { GRID_W, GRID_H } = require('./shared/hexgrid');
@@ -22,6 +23,8 @@ const { GRID_W, GRID_H } = require('./shared/hexgrid');
 // How long a room survives with no facilitator connected before it is reclaimed
 // (grace period for a facilitator reload/reconnect). Overridable for tests.
 const ROOM_GRACE_MS = Number(process.env.ROOM_GRACE_MS) || 15 * 60 * 1000;
+// On-disk snapshot of rooms so in-progress games survive a server restart.
+const PERSIST_FILE = process.env.PERSIST_FILE || path.join(__dirname, 'data', 'rooms.json');
 
 // ─── Server ──────────────────────────────────────────────────────────
 const app=express();
@@ -49,11 +52,13 @@ function broadcast(room,event='game_update',extraPayload=null){
   emit(room.players.blue,'blue');
   emit(room.players.red,'red');
   emit(room.players.facilitator,'facilitator');
+  persistence.markDirty();
 }
 
 function facBroadcast(room){
   if(!room.state||!room.players.facilitator) return;
   io.to(room.players.facilitator).emit('game_update',stateFor(room.state,'facilitator'));
+  persistence.markDirty();
 }
 
 // ─── Combat resolution wrappers (pure logic in shared/game_engine, I/O here) ──
@@ -307,6 +312,7 @@ io.on('connection',socket=>{
     if(!ok){socket.emit('ob_updated',{ok:false,errors});return;}
     room.customOB=ob;
     socket.emit('ob_updated',{ok:true});
+    persistence.markDirty();
   });
 
   // ── Config: facilitador ajusta os fatores de capacidade (PBC) ────────────
@@ -320,6 +326,7 @@ io.on('connection',socket=>{
       custoTotal:totalCost(room.capabilityFactors),
       nCapacidades:countActive(room.capabilityFactors),
     });
+    persistence.markDirty();
   });
 
   // ── Config: facilitador gera simulações em lote (IA × IA) ────────────
@@ -383,6 +390,7 @@ io.on('connection',socket=>{
     socket.emit('game_start',{role:'facilitator',state:stateFor(room.state,'facilitator')});
     runBotsForPhase(room);
     armTurnTimer(room);
+    persistence.markDirty();
   });
 
   // ── Movimentação ────────────────────────────────────────────
@@ -572,6 +580,7 @@ io.on('connection',socket=>{
     socket.emit('game_start',{role:'facilitator',state:stateFor(room.state,'facilitator')});
     runBotsForPhase(room);
     armTurnTimer(room);
+    persistence.markDirty();
   });
 
   // ── Facilitador reassume uma sala após reload/reconexão ──────────────────
@@ -628,7 +637,10 @@ io.on('connection',socket=>{
 });
 
 if(require.main===module){
+  const restored=persistence.loadRooms(rooms,PERSIST_FILE);
+  if(restored>0) console.log(`Salas restauradas do disco: ${restored}`);
+  persistence.startAutosave(rooms,PERSIST_FILE);
   server.listen(PORT,()=>console.log(`Servidor em http://localhost:${PORT}`));
 }
 
-module.exports={app,server,io,rooms,ROOM_GRACE_MS,runBatchGame};
+module.exports={app,server,io,rooms,ROOM_GRACE_MS,PERSIST_FILE,runBatchGame};

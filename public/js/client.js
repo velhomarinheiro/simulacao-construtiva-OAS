@@ -72,13 +72,22 @@ socket.on('connect', () => {
     sessionStorage.removeItem('pendingCode');
     sessionStorage.removeItem('pendingTeam');
     if (code && team) socket.emit('join_room', { roomId: code, team });
+  } else {
+    // No fresh action — but if we were in a room before (reload / server
+    // restart), try to reclaim our seat automatically by the stored code.
+    const savedRoom = sessionStorage.getItem('myRoomId');
+    const savedRole = sessionStorage.getItem('myRole');
+    if (savedRoom && savedRole === 'facilitator') socket.emit('rejoin_room', { roomId: savedRoom });
+    else if (savedRoom && (savedRole === 'blue' || savedRole === 'red')) socket.emit('join_room', { roomId: savedRoom, team: savedRole });
   }
 });
 
-// Facilitador: sala criada
+// Facilitador: sala criada (ou reassumida via rejoin_room)
 socket.on('room_created', ({ roomId, role, ob, capabilityFactors, capabilityFactorDefs }) => {
   myRole = role || 'facilitator';
   if (myRole === 'facilitator') {
+    sessionStorage.setItem('myRoomId', roomId);
+    sessionStorage.setItem('myRole', 'facilitator');
     lobbyScreen.classList.add('hidden');
     configScreen.classList.remove('hidden');
     facInit(roomId, ob, capabilityFactors, capabilityFactorDefs);
@@ -154,11 +163,20 @@ function playerSendMessage() {
 // Jogador: entrou com sucesso
 socket.on('join_success', ({ role, roomId }) => {
   myRole = role;
+  sessionStorage.setItem('myRoomId', roomId);
+  sessionStorage.setItem('myRole', role);
   lobbyScreen.classList.add('hidden');
   showWaitingForFacilitator(role);
 });
 
-socket.on('join_error', msg => showLobbyErr(msg));
+socket.on('join_error', msg => {
+  // A failed auto-rejoin (stale/expired room) should just drop us to the
+  // lobby quietly rather than nag with an error.
+  const wasAutoRejoin = sessionStorage.getItem('myRoomId') && !sessionStorage.getItem('pendingAction');
+  sessionStorage.removeItem('myRoomId');
+  sessionStorage.removeItem('myRole');
+  if (!wasAutoRejoin) showLobbyErr(msg);
+});
 
 // Facilitador: jogador conectou
 socket.on('player_joined', data => {
