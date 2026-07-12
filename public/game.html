@@ -238,6 +238,12 @@
   <div class="fac-modal-box fac-batch-modal-box">
     <div class="fac-modal-title">RESULTADOS — SIMULAÇÕES EM LOTE (IA × IA)</div>
     <div id="fac-batch-summary" class="fac-batch-results"></div>
+    <div class="fac-batch-heat-controls">
+      <span class="config-section-title" style="margin:0">HEATMAP POR GRUPO DE CAPACIDADE (pacote × grupo)</span>
+      <button class="fac-small-btn" onclick="facExportHeatmapCsv()">⬇ CSV</button>
+      <button class="fac-small-btn red" onclick="facClearBatchPackages()">Limpar pacotes</button>
+    </div>
+    <div id="fac-batch-heat"></div>
     <div class="fac-batch-table-wrap">
       <table class="fac-ob-table">
         <thead>

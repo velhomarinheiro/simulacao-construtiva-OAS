@@ -371,3 +371,9 @@ Camada 2 (componentes de força de Coutau-Bégarie) da especificação
 - **UI**: a Ordem de Batalha (config) e o gestor de unidades (em jogo) exibem as
   unidades agrupadas por domínio → grupo, na ordem `taxonomyOrder`, com
   cabeçalhos de seção.
+- **Heatmaps pacote × grupo** (§7): o relatório de lote do facilitador mostra
+  duas matrizes — perdas próprias (Azul) e atrito imposto (Vermelho) — com
+  linhas = grupos (ordem da taxonomia) e colunas = pacotes (configurações de
+  capacidade), células coloridas pela perda % média de SP. Execuções sucessivas
+  acumulam colunas (reexecutar a mesma configuração atualiza a coluna);
+  exportável em CSV.

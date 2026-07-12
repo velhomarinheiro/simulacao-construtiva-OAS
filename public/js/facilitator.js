@@ -14,6 +14,8 @@ let facCapabilityFactors = null; // { A_SSN, B_SSK, C_Azuis, D_MSS, E_Terra } ->
 let facCapabilityDefs    = null; // { [key]: { label, cost, unitIds } }
 let facBatchRows    = null;   // resultados das simulações em lote (IA × IA)
 let facBatchSummary = null;
+let facBatchPackages = [];    // pacotes acumulados p/ o heatmap pacote × grupo
+const FAC_FACTOR_SHORT = { A_SSN: 'SSN', B_SSK: 'SSK', C_Azuis: 'Azuis', D_MSS: 'MSS', E_Terra: 'Terra' };
 
 // ─── Inicialização ────────────────────────────────────────────────────────────
 function facInit(roomId, ob, capabilityFactors, capabilityFactorDefs) {
@@ -329,6 +331,7 @@ function facRunBatchSimulations() {
 function facHandleBatchResults(data) {
   facBatchRows    = data.rows || [];
   facBatchSummary = data.summary || null;
+  facAccumulatePackage(data);
 
   const btn = document.getElementById('fac-batch-btn');
   if (btn) { btn.disabled = false; btn.textContent = '▶ GERAR SIMULAÇÕES'; }
@@ -337,10 +340,87 @@ function facHandleBatchResults(data) {
   if (box && facBatchSummary) {
     facRenderBatchSummary(box, facBatchSummary);
     box.insertAdjacentHTML('beforeend',
-      '<span class="fac-batch-link" onclick="facOpenBatchModal()">Ver detalhes por réplica / exportar CSV</span>');
+      `<span class="fac-batch-link" onclick="facOpenBatchModal()">Ver detalhes / heatmap por grupo (${facBatchPackages.length} pacote(s)) / CSV</span>`);
     box.classList.remove('hidden');
   }
   showFacNotice(`${facBatchRows.length} simulação(ões) concluída(s).`);
+}
+
+// Acumula um "pacote" (config de capacidades) como coluna do heatmap. Reexecutar
+// a mesma config atualiza a coluna existente em vez de duplicá-la.
+function facAccumulatePackage(data) {
+  const gm = data.summary?.groupMeans;
+  if (!gm) return;
+  const factors = data.capabilityFactors || {};
+  const active = Object.keys(FAC_FACTOR_SHORT).filter(k => factors[k]);
+  const sig = active.map(k => FAC_FACTOR_SHORT[k]).join('+') || 'nenhum';
+  const pkg = {
+    sig, label: sig, active,
+    n: data.nCapacidades ?? active.length,
+    custo: data.custoTotal ?? null,
+    blue: gm.blue || {}, red: gm.red || {},
+  };
+  const existing = facBatchPackages.findIndex(p => p.sig === sig);
+  if (existing >= 0) facBatchPackages[existing] = pkg;
+  else facBatchPackages.push(pkg);
+}
+
+function facClearBatchPackages() {
+  facBatchPackages = [];
+  const el = document.getElementById('fac-batch-heat');
+  if (el) el.innerHTML = '<p class="fac-dim">Execute uma simulação para gerar o heatmap.</p>';
+}
+
+// Escala de cor por perda %: 0% verde → 100% vermelho.
+function facHeatColor(v) {
+  if (v == null || isNaN(v)) return '';
+  const x = Math.max(0, Math.min(100, v));
+  const hue = 140 * (1 - x / 100);
+  return `background:hsl(${hue.toFixed(0)},62%,${(28 + (x / 100) * 8).toFixed(0)}%);color:#fff`;
+}
+
+function facHeatmapTable(side, titleColor, titleText) {
+  const TAX = window.FORCE_TAXONOMY;
+  if (!TAX) return '';
+  const labels = TAX.groupLabels(side).filter(g => facBatchPackages.some(p => p[side] && p[side][g.sigla] != null));
+  if (!labels.length) return `<div class="fac-heat-block"><div class="fac-heat-title" style="color:${titleColor}">${titleText}</div><p class="fac-dim">sem dados.</p></div>`;
+  const head = '<th>Grupo</th>' + facBatchPackages.map((p, i) =>
+    `<th title="${escHtml(p.active.join(', ') || 'nenhuma capacidade')} · n=${p.n}${p.custo != null ? ' · $' + p.custo : ''}">P${i + 1}<br><span class="fac-dim">${escHtml(p.sig)}</span></th>`).join('');
+  const body = labels.map(g => {
+    const cells = facBatchPackages.map(p => {
+      const v = p[side] ? p[side][g.sigla] : null;
+      return v == null ? '<td class="heat-na">—</td>' : `<td style="${facHeatColor(v)}">${v.toFixed(0)}%</td>`;
+    }).join('');
+    return `<tr><td class="heat-grp" title="${escHtml(g.label)}"><strong>${escHtml(g.sigla)}</strong></td>${cells}</tr>`;
+  }).join('');
+  return `<div class="fac-heat-block"><div class="fac-heat-title" style="color:${titleColor}">${titleText}</div>
+    <table class="fac-heat-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+function facRenderGroupHeatmaps(container) {
+  if (!container) return;
+  if (!facBatchPackages.length) { container.innerHTML = '<p class="fac-dim">Execute uma simulação para gerar o heatmap.</p>'; return; }
+  container.innerHTML =
+    facHeatmapTable('blue', '#82b1ff', 'Perdas próprias — Força Azul (perda % de SP por grupo)') +
+    facHeatmapTable('red', '#ff8a80', 'Atrito imposto — Força Vermelha (perda % de SP por grupo)');
+}
+
+function facExportHeatmapCsv() {
+  if (!facBatchPackages.length) { showFacNotice('Sem pacotes para exportar.'); return; }
+  const TAX = window.FORCE_TAXONOMY;
+  const cols = [{ key: 'lado', label: 'Lado' }, { key: 'grupo', label: 'Grupo' }, { key: 'descricao', label: 'Descricao' }];
+  facBatchPackages.forEach((p, i) => cols.push({ key: 'P' + (i + 1), label: `P${i + 1}_${p.sig}` }));
+  const rows = [];
+  for (const side of ['blue', 'red']) {
+    for (const g of TAX.groupLabels(side)) {
+      if (!facBatchPackages.some(p => p[side] && p[side][g.sigla] != null)) continue;
+      const row = { lado: side === 'blue' ? 'Azul' : 'Vermelho', grupo: g.sigla, descricao: g.label };
+      facBatchPackages.forEach((p, i) => { const v = p[side] ? p[side][g.sigla] : null; row['P' + (i + 1)] = v == null ? '' : v.toFixed(2); });
+      rows.push(row);
+    }
+  }
+  exportRowsCsv(rows, cols, `wargame-heatmap-grupos-${Date.now()}.csv`);
+  showFacNotice('Heatmap exportado (CSV).');
 }
 
 function facRenderBatchSummary(container, summary) {
@@ -366,6 +446,7 @@ function facOpenBatchModal() {
   const tbody     = document.getElementById('fac-batch-tbody');
   const summaryEl = document.getElementById('fac-batch-summary');
   if (summaryEl && facBatchSummary) facRenderBatchSummary(summaryEl, facBatchSummary);
+  facRenderGroupHeatmaps(document.getElementById('fac-batch-heat'));
   if (tbody) {
     tbody.innerHTML = facBatchRows.map(r => `<tr>
       <td>${r.replica}</td>

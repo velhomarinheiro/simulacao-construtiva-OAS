@@ -13,7 +13,7 @@ const {
   applyCapabilityConfig, CAPABILITY_FACTORS, FACTOR_KEYS, totalCost, countActive,
 } = require('./shared/capability_factors');
 const { decideMovement, decideAttacks } = require('./shared/bot/decision_engine');
-const { createCulminationTracker, computeFinalMetrics } = require('./shared/metrics');
+const { createCulminationTracker, computeFinalMetrics, groupLossMetrics } = require('./shared/metrics');
 const { validateOB } = require('./shared/ob_io');
 const persistence = require('./shared/persistence');
 
@@ -219,7 +219,7 @@ function runBatchGame(customOB,seed,maxTurns){
   }
 
   const metrics=computeFinalMetrics(state,culmination.turn);
-  return{winner,metrics,turns:state.turn};
+  return{winner,metrics,turns:state.turn,groups:groupLossMetrics(state)};
 }
 
 // Agrega os resultados de várias réplicas em estatísticas-resumo.
@@ -239,6 +239,20 @@ function summarizeBatch(rows){
     sTurns+=r.turns||0;
     if(r.metrics.E3_culminancia!=null){sCulm+=r.metrics.E3_culminancia;nCulm++;}
   }
+  // Médias das MOEs por grupo de capacidade (grp_<side>_<SIGLA>) sobre as réplicas.
+  const gAcc={}; // 'blue'/'red' -> SIGLA -> {sum,count}
+  for(const r of rows){
+    for(const [k,v] of Object.entries(r.groups||{})){
+      const m=/^grp_(blue|red)_(.+)$/.exec(k); if(!m) continue;
+      const side=m[1],sigla=m[2];
+      (gAcc[side]=gAcc[side]||{});
+      const a=gAcc[side][sigla]=gAcc[side][sigla]||{sum:0,count:0};
+      a.sum+=v; a.count++;
+    }
+  }
+  const groupMeans={blue:{},red:{}};
+  for(const side of ['blue','red']) for(const [sigla,a] of Object.entries(gAcc[side]||{})) groupMeans[side][sigla]=a.count?a.sum/a.count:null;
+
   return{
     n,winsBlue,winsRed,winsNone,
     avgE1_atrito:n?sE1/n:0,
@@ -248,6 +262,7 @@ function summarizeBatch(rows){
     pctKcv:n?sKcv/n:0,
     avgCulminancia:nCulm?sCulm/nCulm:null,
     avgTurns:n?sTurns/n:0,
+    groupMeans,
   };
 }
 
@@ -358,8 +373,8 @@ io.on('connection',socket=>{
       const end=Math.min(i+CHUNK,nReplicas);
       for(;i<end;i++){
         const runSeed=baseSeed+i;
-        const{winner,metrics,turns}=runBatchGame(customOB,runSeed,nMaxTurns);
-        rows.push({replica:i+1,seed:runSeed,winner,turns,metrics});
+        const{winner,metrics,turns,groups}=runBatchGame(customOB,runSeed,nMaxTurns);
+        rows.push({replica:i+1,seed:runSeed,winner,turns,metrics,groups});
       }
       if(i<nReplicas){
         socket.emit('batch_progress',{done:i,total:nReplicas});
