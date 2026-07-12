@@ -937,3 +937,12 @@ textarea.fac-input { resize: vertical; min-height: 36px; }
 .msg-fac-panel { display: flex; flex-direction: column; gap: 5px; }
 .msg-fac-panel textarea.fac-input { width: 100%; resize: vertical; }
 .fac-msg-incoming { border-left: 3px solid #4a90d9; padding-left: 6px; }
+
+/* ─── Cabeçalho de grupo de capacidade (Camada 2) na OB e no gestor ─────────── */
+.fac-ob-group td, .fac-unit-group {
+  background: rgba(10,46,85,0.55); color: #cfe6ff;
+  font-size: 0.66rem; font-weight: bold; letter-spacing: 0.3px;
+  padding: 4px 6px; border-top: 1px solid #2b6ca3; border-bottom: 1px solid rgba(43,108,163,0.4);
+}
+.fac-ob-group strong { color: #ffd479; }
+.fac-unit-group { display: block; margin: 6px 0 2px; border-radius: 3px; }

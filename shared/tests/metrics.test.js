@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 const {
   attrition, redForceCombatIneffective, offensiveStock,
   fpsoValuePreserved, slocSecurityIndex, createCulminationTracker,
-  computeFinalMetrics,
+  computeFinalMetrics, groupLossMetrics,
 } = require('../metrics');
 const { hasOffensiveMeans, SALVO_KERNELS } = require('../combat_config');
 const { FPSO_UNIT_IDS, PORT_UNIT_IDS } = require('../capability_factors');
@@ -86,6 +86,28 @@ test('culmination tracker fires when Red offensive stock drops to <=50% of turn-
   assert.equal(trk.turn, 3);
   const s4 = mk(1); s4.turn = 4; trk.update(s4);     // stays at first crossing
   assert.equal(trk.turn, 3);
+});
+
+test('groupLossMetrics: SP loss % per capability group, INFRA fallback, absent groups omitted', () => {
+  const state = { units: [
+    // DISS (submarinos): um intacto, um destruído -> 50% de perda (10+0)/(10+10)
+    { id: 'BLUE-SUB-N', team: 'blue', hp: 10, maxHp: 10, weapons: {}, capabilities: {} },
+    { id: 'BLUE-SUB-1', team: 'blue', hp: 0, maxHp: 10, weapons: {}, capabilities: {} },
+    // INTERV: grupo aeronaval a 25% de perda (6/8)
+    { id: 'BLUE-SAG-P', team: 'blue', hp: 6, maxHp: 8, weapons: {}, capabilities: {} },
+    // INFRA (fallback): FPSO intacto -> 0
+    { id: 'BLUE-FPSO1', team: 'blue', hp: 20, maxHp: 20, weapons: {}, capabilities: {} },
+    // Vermelho INTERV: 100% perdido
+    { id: 'RED-GE-1', team: 'red', hp: 0, maxHp: 12, weapons: {}, capabilities: {} },
+  ] };
+  const m = groupLossMetrics(state);
+  assert.equal(m.grp_blue_DISS, 50);
+  assert.equal(m.grp_blue_INTERV, 25);
+  assert.equal(m.grp_blue_INFRA, 0);
+  assert.equal(m.grp_red_INTERV, 100);
+  // grupos sem unidades na força não geram chave
+  assert.ok(!('grp_blue_COST' in m));
+  assert.ok(!('grp_red_INFRA' in m));
 });
 
 test('computeFinalMetrics assembles the full row', () => {

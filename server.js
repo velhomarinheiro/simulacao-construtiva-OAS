@@ -37,6 +37,8 @@ app.get('/game',(_, res)=>res.sendFile(path.join(__dirname,'public','game.html')
 app.get('/favicon.ico',(_, res)=>res.status(204).end());
 // Shared OB import/validation module, reused verbatim by the browser importer.
 app.get('/shared/ob_io.js',(_, res)=>res.sendFile(path.join(__dirname,'shared','ob_io.js')));
+// Force-taxonomy (Camada 2), reused by the browser to group the OB.
+app.get('/shared/force_taxonomy.js',(_, res)=>res.sendFile(path.join(__dirname,'shared','force_taxonomy.js')));
 
 const rooms=new Map();
 function genId(){return Math.random().toString(36).slice(2,8).toUpperCase();}

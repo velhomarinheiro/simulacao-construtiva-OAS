@@ -20,6 +20,35 @@
 
 const { FPSO_UNIT_IDS, PORT_UNIT_IDS } = require('./capability_factors');
 const { hasOffensiveMeans, weaponOffensiveWeight, DEFENSIVE_CAPABILITIES } = require('./combat_config');
+const { classifyUnit } = require('./force_taxonomy');
+
+/**
+ * Perda de poder de permanência (SP) por grupo de capacidade (Camada 2), para
+ * cada lado: `grp_<side>_<SIGLA>` = 100·(1 − Σ SP_atual / Σ SP_inicial) sobre as
+ * unidades do grupo presentes na força (incluindo destruídas, SP_atual=0).
+ * Ativos protegidos agregam em `grp_<side>_INFRA` (fallback de classifyUnit).
+ * Grupos ausentes da força **não** geram chave. Ver docs/ESPEC e
+ * shared/force_taxonomy.js.
+ */
+function groupLossMetrics(state) {
+  const out = {};
+  for (const side of ['blue', 'red']) {
+    const acc = new Map(); // sigla -> {hp, maxHp}
+    for (const u of state.units) {
+      if (u.team !== side) continue;
+      const sigla = classifyUnit(u.id, side).sigla;
+      const a = acc.get(sigla) || { hp: 0, maxHp: 0 };
+      a.hp += Math.max(0, u.hp || 0);
+      a.maxHp += u.maxHp || 0;
+      acc.set(sigla, a);
+    }
+    for (const [sigla, a] of acc) {
+      if (a.maxHp <= 0) continue;
+      out[`grp_${side}_${sigla}`] = Number((100 * (1 - a.hp / a.maxHp)).toFixed(2));
+    }
+  }
+  return out;
+}
 
 /**
  * Offensive stock of `team`'s living units, weighted by expected combat output
@@ -130,4 +159,5 @@ module.exports = {
   slocSecurityIndex,
   createCulminationTracker,
   computeFinalMetrics,
+  groupLossMetrics,
 };

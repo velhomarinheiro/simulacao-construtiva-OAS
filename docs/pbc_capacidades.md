@@ -349,3 +349,25 @@ quase tudo "censurado" com `E1_kcv ≡ 0`.
 
 Para a etapa estatística, lembrar a advertência de CRN da §7 (usar métodos
 pareados/blocados por semente, ou gerar sementes disjuntas por condição).
+
+## 9. Organização por grupo de capacidade (Camada 2)
+
+As unidades são organizadas por **domínio** e **grupo de capacidade** conforme a
+Camada 2 (componentes de força de Coutau-Bégarie) da especificação
+`ESPEC_grupos_de_capacidade.md`, usando `shared/force_taxonomy.json` como **fonte
+única da verdade** (espelhada em `shared/force_taxonomy.js`, travada por teste).
+
+- **Módulo** (`shared/force_taxonomy.js`, UMD node+navegador): `classifyUnit(id,
+  lado)` (com fallback `INFRA` para ativos protegidos e não listados),
+  `taxonomyOrder(lado)` e `groupLabels(lado)`. Decisão de cenário preservada:
+  `BLUE-SAG-P` e `RED-GE-1` (ESCCSG) em `INTERV`.
+- **Cobertura** (teste): todo meio de combate da OB classifica em um grupo real;
+  FPSOs/portos/aeródromos caem em `INFRA`. Os grupos `OPESP` da taxonomia não
+  têm meios nesta OB — ficam vazios (não geram chave), como previsto.
+- **MOEs por grupo** (`metrics.groupLossMetrics`, §7 da especificação): por
+  partida, `grp_<lado>_<SIGLA>` = 100·(1 − Σ SP_atual/Σ SP_inicial) sobre as
+  unidades do grupo. O `batch_runner` acrescenta essas colunas ao CSV, na ordem
+  doutrinária, apenas para os grupos presentes.
+- **UI**: a Ordem de Batalha (config) e o gestor de unidades (em jogo) exibem as
+  unidades agrupadas por domínio → grupo, na ordem `taxonomyOrder`, com
+  cabeçalhos de seção.

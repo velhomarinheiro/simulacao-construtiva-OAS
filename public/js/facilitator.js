@@ -98,7 +98,31 @@ function facRenderOBTable(team) {
   if (!tbody || !facOB) return;
   tbody.innerHTML = '';
   const units = facOB.forces[team] || [];
-  units.forEach((spec, idx) => {
+
+  // Agrupa por domínio → grupo de capacidade (Camada 2), na ordem doutrinária.
+  // Mantém o índice original (facEditUnit/facDelete usam o índice do array).
+  const TAX = window.FORCE_TAXONOMY;
+  const order = TAX ? TAX.taxonomyOrder(team) : null;
+  const list = units.map((spec, idx) => ({
+    spec, idx,
+    cls: TAX ? TAX.classifyUnit(spec.id, team) : { domain: '', sigla: '', label: '' },
+  }));
+  list.sort((a, b) => {
+    const oa = order && order.has(a.spec.id) ? order.get(a.spec.id) : Infinity;
+    const ob = order && order.has(b.spec.id) ? order.get(b.spec.id) : Infinity;
+    return oa !== ob ? oa - ob : a.idx - b.idx;
+  });
+
+  let curKey = null;
+  for (const { spec, idx, cls } of list) {
+    const key = `${cls.domain}|${cls.sigla}`;
+    if (TAX && key !== curKey) {
+      curKey = key;
+      const hr = document.createElement('tr');
+      hr.className = 'fac-ob-group';
+      hr.innerHTML = `<td colspan="6">${escHtml(cls.domain)} · <strong>${escHtml(cls.sigla)}</strong> — ${escHtml(cls.label)}</td>`;
+      tbody.appendChild(hr);
+    }
     const tr = document.createElement('tr');
     const colLetter = String.fromCharCode(65 + (spec.position?.col ?? 0));
     const rowNum    = (spec.position?.row ?? 0) + 1;
@@ -114,7 +138,7 @@ function facRenderOBTable(team) {
       </td>
     `;
     tbody.appendChild(tr);
-  });
+  }
 }
 
 function facAddUnit(team) {
@@ -547,11 +571,29 @@ function facRenderMessages(messages) {
 function facRenderUnitManager(state) {
   const el = document.getElementById('fac-unit-list');
   if (!el || !state) return;
+  const TAX = window.FORCE_TAXONOMY;
   const alive = state.units.filter(u => u.hp > 0);
-  el.innerHTML = alive.map(u => {
+  // Ordena e agrupa por lado → domínio/grupo de capacidade (Camada 2).
+  const sideRank = { blue: 0, red: 1, neutral: 2 };
+  const withCls = alive.map(u => ({ u, cls: TAX ? TAX.classifyUnit(u.id, u.team) : { domain: '', sigla: '', label: '' } }));
+  withCls.sort((a, b) => {
+    if (sideRank[a.u.team] !== sideRank[b.u.team]) return sideRank[a.u.team] - sideRank[b.u.team];
+    const oa = TAX ? (TAX.taxonomyOrder(a.u.team).get(a.u.id) ?? Infinity) : 0;
+    const ob = TAX ? (TAX.taxonomyOrder(b.u.team).get(b.u.id) ?? Infinity) : 0;
+    return oa - ob;
+  });
+  let curKey = null;
+  let html = '';
+  for (const { u, cls } of withCls) {
+    const key = `${u.team}|${cls.sigla}`;
+    if (TAX && key !== curKey) {
+      curKey = key;
+      const teamLabel = u.team === 'blue' ? 'Azul' : u.team === 'red' ? 'Vermelho' : 'Neutro';
+      html += `<div class="fac-unit-group">${teamLabel} · ${escHtml(cls.sigla)} — ${escHtml(cls.label)}</div>`;
+    }
     const tc  = u.team === 'blue' ? 'fac-blue' : u.team === 'red' ? 'fac-red' : 'fac-neutral';
-    const pos = `${String.fromCharCode(65+u.col)}${u.row+1}`;
-    return `<div class="fac-unit-row">
+    const pos = `${String.fromCharCode(65 + u.col)}${u.row + 1}`;
+    html += `<div class="fac-unit-row">
       <span class="${tc}">${u.name}</span>
       <span class="fac-dim">SP:${u.hp}/${u.maxHp} ${pos}</span>
       <div class="fac-unit-row-btns">
@@ -559,7 +601,8 @@ function facRenderUnitManager(state) {
         <button class="fac-small-btn red" onclick="facRemoveUnit('${u.id}','${u.name}')">✕</button>
       </div>
     </div>`;
-  }).join('');
+  }
+  el.innerHTML = html;
 }
 
 function facQuickEditUnit(unitId) {

@@ -35,7 +35,8 @@ const { ORDER_OF_BATTLE } = require('../shared/order_of_battle');
 const { applyCapabilityConfig, FACTOR_KEYS } = require('../shared/capability_factors');
 const GE = require('../shared/game_engine');
 const { decideMovement, decideAttacks } = require('../shared/bot/decision_engine');
-const { createCulminationTracker, computeFinalMetrics } = require('../shared/metrics');
+const { createCulminationTracker, computeFinalMetrics, groupLossMetrics } = require('../shared/metrics');
+const { groupLabels } = require('../shared/force_taxonomy');
 const { FACTORIAL_CONDITIONS, ABLATION_CONDITIONS } = require('./conditions');
 
 function parseArgs(argv) {
@@ -97,7 +98,24 @@ function runGame(factors, seed, maxTurns) {
   }
 
   const metrics = computeFinalMetrics(state, culmination.turn);
-  return { state, winner, metrics };
+  const groupMetrics = groupLossMetrics(state);
+  return { state, winner, metrics, groupMetrics };
+}
+
+// Colunas grp_<lado>_<SIGLA> presentes no lote, na ordem doutrinária da
+// taxonomia (grupos ausentes de todas as forças não geram coluna).
+function groupColumns(rows) {
+  const present = new Set();
+  for (const r of rows) for (const k of Object.keys(r)) if (k.startsWith('grp_')) present.add(k);
+  const ordered = [];
+  for (const side of ['blue', 'red']) {
+    for (const g of groupLabels(side)) {
+      const k = `grp_${side}_${g.sigla}`;
+      if (present.has(k)) ordered.push(k);
+    }
+  }
+  for (const k of present) if (!ordered.includes(k)) ordered.push(k);
+  return ordered;
 }
 
 const CSV_COLUMNS_FATORIAL = ['ID', 'Cond', 'Replica', 'Semente',
@@ -136,7 +154,7 @@ function main() {
     const seeds = args.replicas ? cond.seeds.slice(0, args.replicas) : cond.seeds;
     seeds.forEach((seed, idx) => {
       const replica = idx + 1;
-      const { winner, metrics } = runGame(cond.factors, seed, args.maxTurns);
+      const { winner, metrics, groupMetrics } = runGame(cond.factors, seed, args.maxTurns);
       const row = {
         ID: isFactorial ? `FAT-${cond.condicao}-R${String(replica).padStart(2, '0')}` : `ABL-${cond.condicao}-R${String(replica).padStart(2, '0')}`,
         Replica: replica,
@@ -145,6 +163,7 @@ function main() {
         custo_total: cond.custo_total,
         ...metrics,
         vencedor: winner || 'censurado',
+        ...groupMetrics,
       };
       for (const key of FACTOR_KEYS) row[key] = cond.factors[key];
       if (isFactorial) row.Cond = cond.condicao;
@@ -156,7 +175,8 @@ function main() {
 
   const defaultOut = isFactorial ? 'output/coleta_fatorial.csv' : 'output/coleta_ablacao.csv';
   const outPath = path.resolve(__dirname, '..', args.out || defaultOut);
-  writeCsv(outPath, isFactorial ? CSV_COLUMNS_FATORIAL : CSV_COLUMNS_ABLACAO, rows);
+  const baseCols = isFactorial ? CSV_COLUMNS_FATORIAL : CSV_COLUMNS_ABLACAO;
+  writeCsv(outPath, [...baseCols, ...groupColumns(rows)], rows);
   console.log(`\n${rows.length} jogo(s) registrados em ${outPath}`);
 }
 
